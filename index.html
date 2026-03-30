@@ -138,6 +138,8 @@
   }
   .cd-btn { background: var(--accent); color: var(--bg); }
   .cd-btn:active { background: var(--accent-hover); }
+  .create-session-btn { background: var(--green); color: var(--bg); }
+  .create-session-btn:active { background: #2ea043; }
   .hidden-toggle {
     background: var(--surface2);
     color: var(--text-dim);
@@ -217,6 +219,7 @@
     overflow: hidden;
     touch-action: auto;
     -webkit-overflow-scrolling: touch;
+    position: relative;
   }
   .term-wrap iframe {
     width: 100%;
@@ -225,6 +228,17 @@
     display: block;
     touch-action: auto;
   }
+  .reconnect-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    border-radius: 5px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .reconnect-btn:active { color: var(--accent); border-color: var(--accent); }
 
   /* --- Bottom bar --- */
   .bottom-bar {
@@ -360,7 +374,7 @@
   <!-- Sessions panel -->
   <div class="sidebar-panel active" id="sessionsPanel">
     <div class="session-list" id="sessionList"></div>
-    <button class="add-btn" id="addSession">+ New</button>
+    <button class="add-btn" id="addSession">+ New Session</button>
   </div>
 
   <!-- File browser panel -->
@@ -369,6 +383,7 @@
     <div class="browser" id="browserList"></div>
     <div class="browser-actions">
       <button class="cd-btn" id="cdBtn">cd here</button>
+      <button class="create-session-btn" id="createSessionBtn" style="display:none;">Create Session</button>
       <button class="hidden-toggle" id="hiddenToggle">.hidden</button>
     </div>
   </div>
@@ -378,6 +393,8 @@
   <div class="topbar">
     <button class="menu-btn" id="openSidebar">&#9776;</button>
     <span class="session-label" id="sessionName">--</span>
+    <button class="reconnect-btn" id="reconnectBtn" title="Reload iframe">&#x21bb;</button>
+    <button class="reconnect-btn" id="resessionBtn" title="Kill and recreate session at same dir" style="color:var(--yellow);">Re-session</button>
     <div class="dot" id="connDot"></div>
   </div>
 
@@ -484,16 +501,43 @@ function renderSessions(sessions) {
   });
 }
 
-document.getElementById('addSession').addEventListener('click', async () => {
-  const name = prompt('Session name:');
-  if (!name) return;
-  await fetch('/api/sessions', {
+let browserMode = 'browse'; // 'browse' or 'new-session'
+
+document.getElementById('addSession').addEventListener('click', () => {
+  // Switch to Browse tab in new-session mode
+  browserMode = 'new-session';
+  document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector('[data-panel="browserPanel"]').classList.add('active');
+  document.getElementById('browserPanel').classList.add('active');
+  // Show create button, hide cd button
+  document.getElementById('cdBtn').style.display = 'none';
+  document.getElementById('createSessionBtn').style.display = '';
+  // Browse starting at home directory
+  browseTo('/home/shudai');
+});
+
+// When switching back to browse tab normally, reset mode
+document.getElementById('createSessionBtn').addEventListener('click', async () => {
+  if (!browserPath) return;
+  const dirName = browserPath.split('/').filter(Boolean).pop() || 'main';
+  const res = await fetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name })
+    body: JSON.stringify({ name: dirName, cwd: browserPath })
   });
+  const data = await res.json();
+  // Reset browser mode
+  browserMode = 'browse';
+  document.getElementById('cdBtn').style.display = '';
+  document.getElementById('createSessionBtn').style.display = 'none';
+  // Switch to sessions tab
+  document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector('[data-panel="sessionsPanel"]').classList.add('active');
+  document.getElementById('sessionsPanel').classList.add('active');
   await fetchSessions();
-  switchSession(name.replace(/[^a-zA-Z0-9_-]/g, ''));
+  switchSession(data.name);
 });
 
 async function deleteSession(name) {
@@ -511,6 +555,8 @@ async function deleteSession(name) {
   fetchSessions();
 }
 
+let currentPort = null;
+
 async function switchSession(name) {
   currentSession = name;
   document.getElementById('sessionName').textContent = name;
@@ -524,13 +570,49 @@ async function switchSession(name) {
   });
   const data = await res.json();
   if (data.ok) {
-    setTimeout(() => {
-      document.getElementById('termFrame').src = `http://${HOST}:${data.port}`;
-      document.getElementById('connDot').classList.remove('off');
-    }, 500);
+    currentPort = data.port;
+    loadTermFrame(`http://${HOST}:${data.port}`);
   }
   if (window.innerWidth < 768) closeSidebar();
 }
+
+function loadTermFrame(url) {
+  // Replace iframe entirely to avoid beforeunload dialog
+  const wrap = document.getElementById('termWrap');
+  const oldFrame = document.getElementById('termFrame');
+  if (oldFrame) oldFrame.remove();
+  const newFrame = document.createElement('iframe');
+  newFrame.id = 'termFrame';
+  newFrame.src = 'about:blank';
+  wrap.insertBefore(newFrame, wrap.firstChild);
+  setTimeout(() => {
+    newFrame.src = url;
+    document.getElementById('connDot').classList.remove('off');
+  }, 300);
+}
+
+// Reconnect button - reload iframe
+document.getElementById('reconnectBtn').addEventListener('click', () => {
+  if (currentPort) {
+    loadTermFrame(`http://${HOST}:${currentPort}`);
+  }
+});
+
+// Re-session button - kill session + tmux, recreate at same directory
+document.getElementById('resessionBtn').addEventListener('click', async () => {
+  if (!currentSession) return;
+  const res = await fetch('/api/resession', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: currentSession })
+  });
+  const data = await res.json();
+  if (data.ok) {
+    currentPort = data.port;
+    setTimeout(() => loadTermFrame(`http://${HOST}:${data.port}`), 2000);
+  }
+});
+
 
 // ========== Tap vs scroll detection for button rows ==========
 function setupBtnRow(rowEl, handler) {
@@ -683,6 +765,12 @@ document.querySelectorAll('.sidebar-tab').forEach(tab => {
     if (tab.dataset.panel === 'browserPanel' && !browserLoaded) {
       browseTo('/home');
     }
+    // Reset browser mode when manually switching tabs
+    if (tab.dataset.panel === 'sessionsPanel') {
+      browserMode = 'browse';
+      document.getElementById('cdBtn').style.display = '';
+      document.getElementById('createSessionBtn').style.display = 'none';
+    }
   });
 });
 
@@ -765,13 +853,9 @@ async function init() {
   const last = localStorage.getItem('lastSession');
 
   if (sessions.length === 0) {
-    await fetch('/api/sessions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'main' })
-    });
-    await fetchSessions();
-    switchSession('main');
+    // No sessions - open sidebar in new-session mode
+    openSidebar();
+    document.getElementById('addSession').click();
   } else if (last && sessions.find(s => s.name === last)) {
     switchSession(last);
   } else {

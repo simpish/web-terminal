@@ -7,6 +7,18 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PORT = parseInt(process.env.PORT || '7681');
 const TTYD_BASE_PORT = parseInt(process.env.TTYD_BASE_PORT || '7700');
 
+// Safe exec with killOnTimeout (prevents zombie send-keys)
+function safeExec(cmd, timeoutMs = 3000) {
+  const result = require('child_process').spawnSync('bash', ['-c', cmd], {
+    encoding: 'utf8',
+    timeout: timeoutMs,
+    killSignal: 'SIGKILL',
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0 && result.stderr) throw new Error(result.stderr);
+  return result.stdout;
+}
+
 // --- ttyd process management ---
 // Map: sessionName -> { port, process }
 const ttydProcesses = new Map();
@@ -31,16 +43,44 @@ function startTtyd(sessionName) {
 function stopTtyd(sessionName) {
   const entry = ttydProcesses.get(sessionName);
   if (entry) {
-    try { process.kill(entry.process.pid); } catch {}
+    try { process.kill(entry.process.pid, 'SIGKILL'); } catch {}
     ttydProcesses.delete(sessionName);
   }
+}
+
+function restartTtyd(sessionName) {
+  stopTtyd(sessionName);
+  const port = startTtyd(sessionName);
+  return { ok: true, port };
+}
+
+function resession(sessionName) {
+  // Get current working directory from tmux pane before killing
+  let cwd = '/home';
+  try {
+    cwd = safeExec(`tmux display-message -t "${sessionName}" -p '#{pane_current_path}'`).trim();
+  } catch {}
+  // Kill everything
+  stopTtyd(sessionName);
+  try { safeExec(`tmux kill-session -t "${sessionName}"`); } catch {}
+  // Create fresh session and cd into the directory
+  const port = startTtyd(sessionName);
+  if (cwd && cwd !== '/home') {
+    setTimeout(() => {
+      try {
+        safeExec(`tmux send-keys -t "${sessionName}" -l -- ${JSON.stringify('cd ' + cwd)}`);
+        safeExec(`tmux send-keys -t "${sessionName}" Enter`);
+      } catch {}
+    }, 1500);
+  }
+  return { ok: true, port };
 }
 
 // --- tmux helpers ---
 
 function tmuxList() {
   try {
-    const out = execSync('tmux list-sessions -F "#{session_name}"', { encoding: 'utf8', timeout: 5000 });
+    const out = safeExec('tmux list-sessions -F "#{session_name}"');
     return out.trim().split('\n').filter(Boolean).map(name => {
       const ttyd = ttydProcesses.get(name);
       return { name, port: ttyd ? ttyd.port : null };
@@ -50,17 +90,25 @@ function tmuxList() {
   }
 }
 
-function tmuxCreate(name) {
+function tmuxCreate(name, cwd) {
   const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '');
-  // startTtyd will create tmux session via "tmux new-session -A -s"
   const port = startTtyd(safeName);
+  // Send cd command after a short delay to let ttyd/tmux start
+  if (cwd) {
+    setTimeout(() => {
+      try {
+        safeExec(`tmux send-keys -t "${safeName}" -l -- ${JSON.stringify('cd ' + cwd)}`);
+        safeExec(`tmux send-keys -t "${safeName}" Enter`);
+      } catch {}
+    }, 1500);
+  }
   return { ok: true, name: safeName, port };
 }
 
 function tmuxKill(name) {
   stopTtyd(name);
   try {
-    execSync(`tmux kill-session -t "${name}"`, { encoding: 'utf8', timeout: 5000 });
+    safeExec(`tmux kill-session -t "${name}"`);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -69,17 +117,26 @@ function tmuxKill(name) {
 
 function tmuxSendKeys(name, keys) {
   try {
-    execSync(`tmux send-keys -t "${name}" ${keys}`, { encoding: 'utf8', timeout: 5000 });
+    safeExec(`tmux send-keys -t "${name}" ${keys}`);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
   }
 }
 
+function tmuxSendChunked(name, text) {
+  // Send text in small chunks to prevent tmux hangs with long/CJK text
+  const CHUNK = 64;
+  for (let i = 0; i < text.length; i += CHUNK) {
+    const chunk = text.slice(i, i + CHUNK);
+    safeExec(`tmux send-keys -t "${name}" -l -- ${JSON.stringify(chunk)}`);
+  }
+}
+
 function tmuxSendText(name, text) {
   try {
-    execSync(`tmux send-keys -t "${name}" -l -- ${JSON.stringify(text)}`, { encoding: 'utf8', timeout: 5000 });
-    execSync(`tmux send-keys -t "${name}" Enter`, { encoding: 'utf8', timeout: 5000 });
+    tmuxSendChunked(name, text);
+    safeExec(`tmux send-keys -t "${name}" Enter`);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -88,7 +145,7 @@ function tmuxSendText(name, text) {
 
 function tmuxSendLiteral(name, text) {
   try {
-    execSync(`tmux send-keys -t "${name}" -l -- ${JSON.stringify(text)}`, { encoding: 'utf8', timeout: 5000 });
+    tmuxSendChunked(name, text);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -98,12 +155,12 @@ function tmuxSendLiteral(name, text) {
 function tmuxScroll(name, direction) {
   try {
     if (direction === 'up') {
-      execSync(`tmux copy-mode -t "${name}" && tmux send-keys -t "${name}" -X halfpage-up`, { encoding: 'utf8', timeout: 5000 });
+      safeExec(`tmux copy-mode -t "${name}" && tmux send-keys -t "${name}" -X halfpage-up`);
     } else if (direction === 'down') {
-      execSync(`tmux send-keys -t "${name}" -X halfpage-down 2>/dev/null || true`, { encoding: 'utf8', timeout: 5000 });
+      safeExec(`tmux send-keys -t "${name}" -X halfpage-down 2>/dev/null || true`);
     } else if (direction === 'exit') {
       // Exit copy mode
-      execSync(`tmux send-keys -t "${name}" -X cancel 2>/dev/null || true`, { encoding: 'utf8', timeout: 5000 });
+      safeExec(`tmux send-keys -t "${name}" -X cancel 2>/dev/null || true`);
     }
     return { ok: true };
   } catch (e) {
@@ -179,7 +236,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/sessions' && req.method === 'POST') {
     const body = await parseBody(req);
-    return json(res, tmuxCreate(body.name || 'main'));
+    return json(res, tmuxCreate(body.name || 'main', body.cwd));
   }
 
   if (pathname === '/api/sessions' && req.method === 'DELETE') {
@@ -194,6 +251,22 @@ const server = http.createServer(async (req, res) => {
     if (!name) return json(res, { error: 'session required' }, 400);
     const port = startTtyd(name);
     return json(res, { ok: true, port });
+  }
+
+  if (pathname === '/api/restart' && req.method === 'POST') {
+    // Kill and restart ttyd for a session (tmux session preserved)
+    const body = await parseBody(req);
+    const name = body.session;
+    if (!name) return json(res, { error: 'session required' }, 400);
+    return json(res, restartTtyd(name));
+  }
+
+  if (pathname === '/api/resession' && req.method === 'POST') {
+    // Kill session entirely and recreate at same directory
+    const body = await parseBody(req);
+    const name = body.session;
+    if (!name) return json(res, { error: 'session required' }, 400);
+    return json(res, resession(name));
   }
 
   if (pathname === '/api/ls' && req.method === 'POST') {
