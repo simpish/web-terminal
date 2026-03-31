@@ -33,6 +33,7 @@ function startTtyd(sessionName) {
     '-i', HOST,
     '-p', String(port),
     '-W',
+    '-t', 'scrollback=0',
     'tmux', 'new-session', '-A', '-s', sessionName
   ], { stdio: 'ignore', detached: true });
   proc.unref();
@@ -91,7 +92,14 @@ function tmuxList() {
 }
 
 function tmuxCreate(name, cwd) {
-  const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '');
+  let safeName = name.replace(/[^a-zA-Z0-9_-]/g, '');
+  // If session already exists, append -2, -3, etc.
+  const existing = tmuxList().map(s => s.name);
+  if (existing.includes(safeName)) {
+    let i = 2;
+    while (existing.includes(`${safeName}-${i}`)) i++;
+    safeName = `${safeName}-${i}`;
+  }
   const port = startTtyd(safeName);
   // Send cd command after a short delay to let ttyd/tmux start
   if (cwd) {

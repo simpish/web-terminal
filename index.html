@@ -394,8 +394,8 @@
     <button class="menu-btn" id="openSidebar">&#9776;</button>
     <span class="session-label" id="sessionName">--</span>
     <button class="reconnect-btn" id="reconnectBtn" title="Reload iframe">&#x21bb;</button>
-    <button class="reconnect-btn" id="resessionBtn" title="Kill and recreate session at same dir" style="color:var(--yellow);">Re-session</button>
     <div class="dot" id="connDot"></div>
+    <button class="reconnect-btn" id="resessionBtn" title="Kill and recreate session at same dir" style="color:var(--red);margin-left:auto;">&times; Re-session</button>
   </div>
 
   <div class="term-wrap" id="termWrap">
@@ -408,6 +408,7 @@
       <button class="kb" id="menuBtn2" style="background:var(--accent);color:var(--bg);">&#9776;</button>
       <button class="kb" data-key="Escape">Esc</button>
       <button class="kb" data-key="Tab">Tab</button>
+      <button class="kb" data-key="BTab">S-Tab</button>
       <button class="kb" data-scroll="up">PgUp</button>
       <button class="kb" data-scroll="down">PgDn</button>
       <button class="kb" data-scroll="exit" style="color:var(--yellow);">Exit</button>
@@ -671,6 +672,10 @@ async function scrollTerminal(direction) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session: currentSession, direction })
   });
+  // After exiting copy-mode, reload iframe to restore input
+  if (direction === 'exit' && currentPort) {
+    setTimeout(() => loadTermFrame(`http://${HOST}:${currentPort}`), 300);
+  }
 }
 
 // ========== Claude shortcuts ==========
