@@ -393,7 +393,6 @@
   <div class="topbar">
     <button class="menu-btn" id="openSidebar">&#9776;</button>
     <span class="session-label" id="sessionName">--</span>
-    <button class="reconnect-btn" id="reconnectBtn" title="Reload iframe">&#x21bb;</button>
     <div class="dot" id="connDot"></div>
     <button class="reconnect-btn" id="resessionBtn" title="Kill and recreate session at same dir" style="color:var(--red);margin-left:auto;">&times; Re-session</button>
   </div>
@@ -406,6 +405,7 @@
     <!-- Row 1: Most used keys + Claude toggle -->
     <div class="btn-row" id="keysRow">
       <button class="kb" id="menuBtn2" style="background:var(--accent);color:var(--bg);">&#9776;</button>
+      <button class="kb" id="reloadBtn" style="color:var(--green);">&#x21bb;</button>
       <button class="kb" data-key="Escape">Esc</button>
       <button class="kb" data-key="Tab">Tab</button>
       <button class="kb" data-key="BTab">S-Tab</button>
@@ -515,7 +515,7 @@ document.getElementById('addSession').addEventListener('click', () => {
   document.getElementById('cdBtn').style.display = 'none';
   document.getElementById('createSessionBtn').style.display = '';
   // Browse starting at home directory
-  browseTo('/home/shudai');
+  browseTo(HOME_DIR);
 });
 
 // When switching back to browse tab normally, reset mode
@@ -592,8 +592,8 @@ function loadTermFrame(url) {
   }, 300);
 }
 
-// Reconnect button - reload iframe
-document.getElementById('reconnectBtn').addEventListener('click', () => {
+// Reload button - reload iframe
+document.getElementById('reloadBtn').addEventListener('click', () => {
   if (currentPort) {
     loadTermFrame(`http://${HOST}:${currentPort}`);
   }
@@ -768,7 +768,7 @@ document.querySelectorAll('.sidebar-tab').forEach(tab => {
     tab.classList.add('active');
     document.getElementById(tab.dataset.panel).classList.add('active');
     if (tab.dataset.panel === 'browserPanel' && !browserLoaded) {
-      browseTo('/home');
+      browseTo(HOME_DIR);
     }
     // Reset browser mode when manually switching tabs
     if (tab.dataset.panel === 'sessionsPanel') {
@@ -780,8 +780,10 @@ document.querySelectorAll('.sidebar-tab').forEach(tab => {
 });
 
 // ========== File browser ==========
-let browserPath = '/home';
+let browserPath = '';
 let browserLoaded = false;
+let HOME_DIR = '/';
+fetch('/api/home').then(r => r.json()).then(d => { HOME_DIR = d.home; browserPath = HOME_DIR; });
 let showHidden = false;
 
 async function browseTo(dirPath) {

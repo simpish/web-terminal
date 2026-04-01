@@ -18,16 +18,58 @@ Mobile-friendly web terminal with tmux session management. Designed for controll
 - tmux
 - ttyd ([install](https://github.com/tsl0922/ttyd/releases))
 
-## Install ttyd
+## Quick Setup
+
+### macOS
 
 ```bash
-# Linux aarch64 (Raspberry Pi)
-curl -sL -o /usr/local/bin/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.aarch64
-chmod +x /usr/local/bin/ttyd
+# 1. Install dependencies
+brew install tmux ttyd
 
-# macOS
-brew install ttyd
+# 2. Clone the repository
+git clone https://github.com/<your-username>/web-terminal.git
+cd web-terminal
+
+# 3. Start the server
+node server.js
 ```
+
+### Linux (Debian/Ubuntu)
+
+```bash
+# 1. Install Node.js 18+ (if not installed)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
+sudo apt-get install -y nodejs
+
+# 2. Install tmux
+sudo apt-get install -y tmux
+
+# 3. Install ttyd
+# aarch64 (Raspberry Pi)
+sudo curl -sL -o /usr/local/bin/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.aarch64
+sudo chmod +x /usr/local/bin/ttyd
+
+# x86_64
+# sudo curl -sL -o /usr/local/bin/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
+# sudo chmod +x /usr/local/bin/ttyd
+
+# 4. Clone the repository
+git clone https://github.com/<your-username>/web-terminal.git
+cd web-terminal
+
+# 5. Start the server
+node server.js
+```
+
+### Verify installation
+
+```bash
+node -v     # v18.0.0 以上
+tmux -V     # tmux 3.x
+ttyd -v     # ttyd version 1.7.x
+```
+
+After starting the server, open `http://localhost:7681` in your browser.
 
 ## Usage
 
@@ -41,8 +83,6 @@ HOST=100.x.x.x node server.js
 # Custom port
 PORT=8080 node server.js
 ```
-
-Then open `http://<host>:7681` in your browser.
 
 ## Environment Variables
 

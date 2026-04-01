@@ -1,9 +1,11 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { execSync, spawn } = require('child_process');
 
 const HOST = process.env.HOST || '0.0.0.0';
+const HOME = os.homedir();
 const PORT = parseInt(process.env.PORT || '7681');
 const TTYD_BASE_PORT = parseInt(process.env.TTYD_BASE_PORT || '7700');
 
@@ -57,7 +59,7 @@ function restartTtyd(sessionName) {
 
 function resession(sessionName) {
   // Get current working directory from tmux pane before killing
-  let cwd = '/home';
+  let cwd = HOME;
   try {
     cwd = safeExec(`tmux display-message -t "${sessionName}" -p '#{pane_current_path}'`).trim();
   } catch {}
@@ -178,7 +180,7 @@ function tmuxScroll(name, direction) {
 
 function listDir(dirPath) {
   try {
-    const resolved = path.resolve(dirPath || '/home');
+    const resolved = path.resolve(dirPath || HOME);
     const entries = fs.readdirSync(resolved, { withFileTypes: true });
     const dirs = [];
     const files = [];
@@ -197,7 +199,7 @@ function listDir(dirPath) {
 
 function listDirAll(dirPath) {
   try {
-    const resolved = path.resolve(dirPath || '/home');
+    const resolved = path.resolve(dirPath || HOME);
     const entries = fs.readdirSync(resolved, { withFileTypes: true });
     const dirs = [];
     const files = [];
@@ -237,6 +239,10 @@ const server = http.createServer(async (req, res) => {
   const pathname = url.pathname;
 
   // --- API routes ---
+
+  if (pathname === '/api/home' && req.method === 'GET') {
+    return json(res, { home: HOME });
+  }
 
   if (pathname === '/api/sessions' && req.method === 'GET') {
     return json(res, tmuxList());
