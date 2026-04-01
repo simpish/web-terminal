@@ -142,13 +142,10 @@ function tmuxRename(oldName, newName) {
   }
   try {
     safeExec(`tmux rename-session -t "${oldName}" "${safeName}"`);
-    // Update ttyd process map
-    const entry = ttydProcesses.get(oldName);
-    if (entry) {
-      ttydProcesses.delete(oldName);
-      ttydProcesses.set(safeName, entry);
-    }
-    return { ok: true, name: safeName };
+    // Restart ttyd so it connects with the new session name
+    stopTtyd(oldName);
+    const port = startTtyd(safeName);
+    return { ok: true, name: safeName, port };
   } catch (e) {
     return { ok: false, error: e.message };
   }

@@ -30,22 +30,15 @@ function renderSessions(sessions) {
   const list = document.getElementById('sessionList');
   list.innerHTML = sessions.map(s => `
     <div class="session-item ${s.name === currentSession ? 'active' : ''}" data-session="${s.name}">
-      <span class="session-name">${s.name}</span>
+      <span>${s.name}</span>
       <button class="del" data-del="${s.name}">&times;</button>
     </div>
   `).join('');
 
   list.querySelectorAll('.session-item').forEach(el => {
     el.addEventListener('click', e => {
-      if (e.target.closest('.del') || e.target.closest('.rename-input')) return;
+      if (e.target.closest('.del')) return;
       switchSession(el.dataset.session);
-    });
-
-    // Double-tap to rename
-    const nameSpan = el.querySelector('.session-name');
-    nameSpan.addEventListener('dblclick', e => {
-      e.stopPropagation();
-      startRename(el, el.dataset.session);
     });
   });
   list.querySelectorAll('.del').forEach(el => {
@@ -53,18 +46,28 @@ function renderSessions(sessions) {
   });
 }
 
-function startRename(itemEl, oldName) {
-  const nameSpan = itemEl.querySelector('.session-name');
+// ========== Rename session (topbar pencil button) ==========
+document.getElementById('renameBtn').addEventListener('click', () => {
+  if (!currentSession) return;
+  const label = document.getElementById('sessionName');
+  const btn = document.getElementById('renameBtn');
+  const oldName = currentSession;
+
   const input = document.createElement('input');
   input.type = 'text';
-  input.className = 'rename-input';
+  input.className = 'rename-inline';
   input.value = oldName;
-  nameSpan.replaceWith(input);
+  label.replaceWith(input);
+  btn.style.display = 'none';
   input.focus();
   input.select();
 
   const commit = async () => {
     const newName = input.value.trim();
+    const span = document.createElement('span');
+    span.className = 'session-label';
+    span.id = 'sessionName';
+
     if (newName && newName !== oldName) {
       const res = await fetch('/api/sessions', {
         method: 'PATCH',
@@ -73,14 +76,25 @@ function startRename(itemEl, oldName) {
       });
       const data = await res.json();
       if (data.ok) {
-        if (currentSession === oldName) {
-          currentSession = data.name;
-          document.getElementById('sessionName').textContent = data.name;
-          localStorage.setItem('lastSession', data.name);
+        currentSession = data.name;
+        span.textContent = data.name;
+        localStorage.setItem('lastSession', data.name);
+        // Reconnect iframe to new ttyd port
+        if (data.port) {
+          currentPort = data.port;
+          currentTtydHost = HOST;
+          setTimeout(() => loadTermFrame(`http://${currentTtydHost}:${data.port}`), 500);
         }
+        fetchSessions();
+      } else {
+        span.textContent = oldName;
       }
+    } else {
+      span.textContent = oldName;
     }
-    fetchSessions();
+
+    input.replaceWith(span);
+    btn.style.display = '';
   };
 
   input.addEventListener('blur', commit);
@@ -88,7 +102,7 @@ function startRename(itemEl, oldName) {
     if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
     if (e.key === 'Escape') { input.value = oldName; input.blur(); }
   });
-}
+});
 
 let browserMode = 'browse'; // 'browse' or 'new-session'
 
