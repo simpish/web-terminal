@@ -23,7 +23,19 @@ function safeExec(cmd, timeoutMs = 3000) {
     killSignal: 'SIGKILL',
   });
   if (result.error) throw result.error;
-  if (result.status !== 0 && result.stderr) throw new Error(result.stderr);
+  if (result.status !== 0) throw new Error(result.stderr || `Command failed with exit code ${result.status}`);
+  return result.stdout;
+}
+
+// Direct tmux invocation via spawnSync args (avoids shell injection)
+function tmuxExec(args, timeoutMs = 3000) {
+  const result = require('child_process').spawnSync('tmux', args, {
+    encoding: 'utf8',
+    timeout: timeoutMs,
+    killSignal: 'SIGKILL',
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(result.stderr || `tmux failed with exit code ${result.status}`);
   return result.stdout;
 }
 
@@ -68,18 +80,18 @@ function resession(sessionName) {
   // Get current working directory from tmux pane before killing
   let cwd = HOME;
   try {
-    cwd = safeExec(`tmux display-message -t "${sessionName}" -p '#{pane_current_path}'`).trim();
+    cwd = tmuxExec(['display-message', '-t', sessionName, '-p', '#{pane_current_path}']).trim();
   } catch {}
   // Kill everything
   stopTtyd(sessionName);
-  try { safeExec(`tmux kill-session -t "${sessionName}"`); } catch {}
+  try { tmuxExec(['kill-session', '-t', sessionName]); } catch {}
   // Create fresh session and cd into the directory
   const port = startTtyd(sessionName);
   if (cwd && cwd !== '/home') {
     setTimeout(() => {
       try {
-        safeExec(`tmux send-keys -t "${sessionName}" -l -- ${JSON.stringify('cd ' + cwd)}`);
-        safeExec(`tmux send-keys -t "${sessionName}" Enter`);
+        tmuxExec(['send-keys', '-t', sessionName, '-l', '--', 'cd ' + cwd]);
+        tmuxExec(['send-keys', '-t', sessionName, 'Enter']);
       } catch {}
     }, 1500);
   }
@@ -90,7 +102,7 @@ function resession(sessionName) {
 
 function tmuxList() {
   try {
-    const out = safeExec('tmux list-sessions -F "#{session_name}"');
+    const out = tmuxExec(['list-sessions', '-F', '#{session_name}']);
     return out.trim().split('\n').filter(Boolean).map(name => {
       const ttyd = ttydProcesses.get(name);
       return { name, port: ttyd ? ttyd.port : null };
@@ -114,8 +126,8 @@ function tmuxCreate(name, cwd) {
   if (cwd) {
     setTimeout(() => {
       try {
-        safeExec(`tmux send-keys -t "${safeName}" -l -- ${JSON.stringify('cd ' + cwd)}`);
-        safeExec(`tmux send-keys -t "${safeName}" Enter`);
+        tmuxExec(['send-keys', '-t', safeName, '-l', '--', 'cd ' + cwd]);
+        tmuxExec(['send-keys', '-t', safeName, 'Enter']);
       } catch {}
     }, 1500);
   }
@@ -125,7 +137,7 @@ function tmuxCreate(name, cwd) {
 function tmuxKill(name) {
   stopTtyd(name);
   try {
-    safeExec(`tmux kill-session -t "${name}"`);
+    tmuxExec(['kill-session', '-t', name]);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -141,7 +153,7 @@ function tmuxRename(oldName, newName) {
     return { ok: false, error: 'name already exists' };
   }
   try {
-    safeExec(`tmux rename-session -t "${oldName}" "${safeName}"`);
+    tmuxExec(['rename-session', '-t', oldName, safeName]);
     // Restart ttyd so it connects with the new session name
     stopTtyd(oldName);
     const port = startTtyd(safeName);
@@ -153,7 +165,7 @@ function tmuxRename(oldName, newName) {
 
 function tmuxSendKeys(name, keys) {
   try {
-    safeExec(`tmux send-keys -t "${name}" ${keys}`);
+    tmuxExec(['send-keys', '-t', name, keys]);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -165,14 +177,14 @@ function tmuxSendChunked(name, text) {
   const CHUNK = 64;
   for (let i = 0; i < text.length; i += CHUNK) {
     const chunk = text.slice(i, i + CHUNK);
-    safeExec(`tmux send-keys -t "${name}" -l -- ${JSON.stringify(chunk)}`);
+    tmuxExec(['send-keys', '-t', name, '-l', '--', chunk]);
   }
 }
 
 function tmuxSendText(name, text) {
   try {
     tmuxSendChunked(name, text);
-    safeExec(`tmux send-keys -t "${name}" Enter`);
+    tmuxExec(['send-keys', '-t', name, 'Enter']);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -191,12 +203,13 @@ function tmuxSendLiteral(name, text) {
 function tmuxScroll(name, direction) {
   try {
     if (direction === 'up') {
-      safeExec(`tmux copy-mode -t "${name}" && tmux send-keys -t "${name}" -X halfpage-up`);
+      tmuxExec(['copy-mode', '-t', name]);
+      tmuxExec(['send-keys', '-t', name, '-X', 'halfpage-up']);
     } else if (direction === 'down') {
-      safeExec(`tmux send-keys -t "${name}" -X halfpage-down 2>/dev/null || true`);
+      try { tmuxExec(['send-keys', '-t', name, '-X', 'halfpage-down']); } catch {}
     } else if (direction === 'exit') {
       // Exit copy mode
-      safeExec(`tmux send-keys -t "${name}" -X cancel 2>/dev/null || true`);
+      try { tmuxExec(['send-keys', '-t', name, '-X', 'cancel']); } catch {}
     }
     return { ok: true };
   } catch (e) {

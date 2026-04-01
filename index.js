@@ -304,11 +304,21 @@ async function flushInput() {
   const input = document.getElementById('cmdInput');
   const text = input.value;
   if (!text) return;
-  await fetch('/api/send-literal', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session: currentSession, text })
-  });
+  try {
+    const res = await fetch('/api/send-literal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session: currentSession, text })
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      console.error('send-literal failed:', data.error);
+      return;
+    }
+  } catch (e) {
+    console.error('send-literal error:', e);
+    return;
+  }
   input.value = '';
   input.style.height = 'auto';
 }
@@ -339,11 +349,23 @@ async function doRun() {
   const input = document.getElementById('cmdInput');
   const text = input.value;
   if (text) {
-    await fetch('/api/send-text', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session: currentSession, text })
-    });
+    try {
+      const res = await fetch('/api/send-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session: currentSession, text })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        console.error('send-text failed:', data.error);
+        input.focus();
+        return;
+      }
+    } catch (e) {
+      console.error('send-text error:', e);
+      input.focus();
+      return;
+    }
     input.value = '';
     input.style.height = 'auto';
   } else {
