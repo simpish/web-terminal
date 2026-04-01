@@ -557,6 +557,7 @@ async function deleteSession(name) {
 }
 
 let currentPort = null;
+let currentTtydHost = null;
 
 async function switchSession(name) {
   currentSession = name;
@@ -572,7 +573,8 @@ async function switchSession(name) {
   const data = await res.json();
   if (data.ok) {
     currentPort = data.port;
-    loadTermFrame(`http://${HOST}:${data.port}`);
+    currentTtydHost = data.host || HOST;
+    loadTermFrame(`http://${currentTtydHost}:${data.port}`);
   }
   if (window.innerWidth < 768) closeSidebar();
 }
@@ -595,7 +597,7 @@ function loadTermFrame(url) {
 // Reload button - reload iframe
 document.getElementById('reloadBtn').addEventListener('click', () => {
   if (currentPort) {
-    loadTermFrame(`http://${HOST}:${currentPort}`);
+    loadTermFrame(`http://${currentTtydHost || HOST}:${currentPort}`);
   }
 });
 
@@ -610,7 +612,8 @@ document.getElementById('resessionBtn').addEventListener('click', async () => {
   const data = await res.json();
   if (data.ok) {
     currentPort = data.port;
-    setTimeout(() => loadTermFrame(`http://${HOST}:${data.port}`), 2000);
+    currentTtydHost = data.host || HOST;
+    setTimeout(() => loadTermFrame(`http://${currentTtydHost}:${data.port}`), 2000);
   }
 });
 
@@ -674,7 +677,7 @@ async function scrollTerminal(direction) {
   });
   // After exiting copy-mode, reload iframe to restore input
   if (direction === 'exit' && currentPort) {
-    setTimeout(() => loadTermFrame(`http://${HOST}:${currentPort}`), 300);
+    setTimeout(() => loadTermFrame(`http://${currentTtydHost || HOST}:${currentPort}`), 300);
   }
 }
 

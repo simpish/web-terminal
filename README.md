@@ -88,6 +88,19 @@ PORT=8080 node server.js
 
 | Variable | Default | Description |
 |---|---|---|
-| `HOST` | `0.0.0.0` | Bind address |
+| `HOST` | Tailscale IP (auto) | Bind address. Auto-detects Tailscale IP for secure access. Falls back to `0.0.0.0` if Tailscale is not installed. |
 | `PORT` | `7681` | Web UI port |
 | `TTYD_BASE_PORT` | `7700` | Starting port for ttyd instances |
+
+## Persistent Service (Auto-start)
+
+```bash
+# Install as a persistent service (auto-detected: launchd on macOS, systemd on Linux)
+./install.sh
+
+# Custom settings
+HOST=100.x.x.x PORT=8080 ./install.sh
+
+# Uninstall
+./uninstall.sh
+```

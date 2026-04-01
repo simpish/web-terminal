@@ -4,7 +4,13 @@ const path = require('path');
 const os = require('os');
 const { execSync, spawn } = require('child_process');
 
-const HOST = process.env.HOST || '0.0.0.0';
+const HOST = process.env.HOST || (() => {
+  try {
+    return require('child_process').execSync('tailscale ip -4', { encoding: 'utf8' }).trim();
+  } catch {
+    return '0.0.0.0';
+  }
+})();
 const HOME = os.homedir();
 const PORT = parseInt(process.env.PORT || '7681');
 const TTYD_BASE_PORT = parseInt(process.env.TTYD_BASE_PORT || '7700');
@@ -36,8 +42,9 @@ function startTtyd(sessionName) {
     '-p', String(port),
     '-W',
     '-t', 'scrollback=0',
+    '-t', 'fontFamily=MesloLGS NF,Hack Nerd Font,FiraCode Nerd Font,JetBrainsMono Nerd Font,Menlo,Monaco,Consolas,monospace',
     'tmux', 'new-session', '-A', '-s', sessionName
-  ], { stdio: 'ignore', detached: true });
+  ], { stdio: 'ignore', detached: true, env: { ...process.env, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' } });
   proc.unref();
   ttydProcesses.set(sessionName, { port, process: proc });
   return port;
@@ -264,7 +271,7 @@ const server = http.createServer(async (req, res) => {
     const name = body.session;
     if (!name) return json(res, { error: 'session required' }, 400);
     const port = startTtyd(name);
-    return json(res, { ok: true, port });
+    return json(res, { ok: true, port, host: HOST });
   }
 
   if (pathname === '/api/restart' && req.method === 'POST') {
@@ -272,7 +279,8 @@ const server = http.createServer(async (req, res) => {
     const body = await parseBody(req);
     const name = body.session;
     if (!name) return json(res, { error: 'session required' }, 400);
-    return json(res, restartTtyd(name));
+    const restartResult = restartTtyd(name);
+    return json(res, { ...restartResult, host: HOST });
   }
 
   if (pathname === '/api/resession' && req.method === 'POST') {
@@ -280,7 +288,8 @@ const server = http.createServer(async (req, res) => {
     const body = await parseBody(req);
     const name = body.session;
     if (!name) return json(res, { error: 'session required' }, 400);
-    return json(res, resession(name));
+    const resessionResult = resession(name);
+    return json(res, { ...resessionResult, host: HOST });
   }
 
   if (pathname === '/api/ls' && req.method === 'POST') {
