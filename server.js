@@ -132,6 +132,28 @@ function tmuxKill(name) {
   }
 }
 
+function tmuxRename(oldName, newName) {
+  let safeName = newName.replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!safeName) return { ok: false, error: 'invalid name' };
+  if (safeName === oldName) return { ok: true, name: safeName };
+  const existing = tmuxList().map(s => s.name);
+  if (existing.includes(safeName)) {
+    return { ok: false, error: 'name already exists' };
+  }
+  try {
+    safeExec(`tmux rename-session -t "${oldName}" "${safeName}"`);
+    // Update ttyd process map
+    const entry = ttydProcesses.get(oldName);
+    if (entry) {
+      ttydProcesses.delete(oldName);
+      ttydProcesses.set(safeName, entry);
+    }
+    return { ok: true, name: safeName };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 function tmuxSendKeys(name, keys) {
   try {
     safeExec(`tmux send-keys -t "${name}" ${keys}`);
@@ -260,6 +282,11 @@ const server = http.createServer(async (req, res) => {
     return json(res, tmuxCreate(body.name || 'main', body.cwd));
   }
 
+  if (pathname === '/api/sessions' && req.method === 'PATCH') {
+    const body = await parseBody(req);
+    return json(res, tmuxRename(body.oldName, body.newName));
+  }
+
   if (pathname === '/api/sessions' && req.method === 'DELETE') {
     const body = await parseBody(req);
     return json(res, tmuxKill(body.name));
@@ -319,10 +346,34 @@ const server = http.createServer(async (req, res) => {
   }
 
   // --- Static files ---
-  if (pathname === '/' || pathname === '/index.html') {
-    const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    return res.end(html);
+  const STATIC_TYPES = {
+    '.html': 'text/html; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.png': 'image/png',
+    '.svg': 'image/svg+xml',
+    '.ico': 'image/x-icon',
+  };
+
+  const safePath = pathname === '/' ? '/index.html' : pathname;
+  const ext = path.extname(safePath);
+  const contentType = STATIC_TYPES[ext];
+
+  if (contentType) {
+    const filePath = path.join(__dirname, safePath);
+    // Prevent directory traversal
+    if (!filePath.startsWith(__dirname)) {
+      res.writeHead(403);
+      return res.end('Forbidden');
+    }
+    try {
+      const data = fs.readFileSync(filePath);
+      res.writeHead(200, { 'Content-Type': contentType });
+      return res.end(data);
+    } catch {
+      // fall through to 404
+    }
   }
 
   res.writeHead(404);
