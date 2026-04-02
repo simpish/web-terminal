@@ -163,6 +163,7 @@ let currentTtydHost = null;
 
 async function switchSession(name) {
   currentSession = name;
+  inScrollMode = false;
   document.getElementById('sessionName').textContent = name;
   localStorage.setItem('lastSession', name);
   fetchSessions();
@@ -252,6 +253,7 @@ setupBtnRow(document.getElementById('keysRow'), btn => {
 });
 
 let claudeRowLocked = false;
+let inScrollMode = false;
 function toggleClaude() {
   const row = document.getElementById('claudeRow');
   const toggle = document.getElementById('claudeToggle');
@@ -277,9 +279,14 @@ async function scrollTerminal(direction) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session: currentSession, direction })
   });
-  // After exiting copy-mode, reload iframe to restore input
-  if (direction === 'exit' && currentPort) {
-    setTimeout(() => loadTermFrame(`http://${currentTtydHost || HOST}:${currentPort}`), 300);
+  if (direction === 'exit') {
+    inScrollMode = false;
+    // Reload iframe to restore input
+    if (currentPort) {
+      setTimeout(() => loadTermFrame(`http://${currentTtydHost || HOST}:${currentPort}`), 300);
+    }
+  } else if (direction === 'up' || direction === 'down') {
+    inScrollMode = true;
   }
 }
 
@@ -300,10 +307,21 @@ function insertClaudeCmd(cmd) {
 }
 
 // ========== Send keys ==========
+async function exitScrollIfNeeded() {
+  if (!inScrollMode) return;
+  await fetch('/api/scroll', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: currentSession, direction: 'exit' })
+  });
+  inScrollMode = false;
+}
+
 async function flushInput() {
   const input = document.getElementById('cmdInput');
   const text = input.value;
   if (!text) return;
+  await exitScrollIfNeeded();
   try {
     const res = await fetch('/api/send-literal', {
       method: 'POST',
@@ -349,6 +367,7 @@ async function doRun() {
   const input = document.getElementById('cmdInput');
   const text = input.value;
   if (text) {
+    await exitScrollIfNeeded();
     try {
       const res = await fetch('/api/send-text', {
         method: 'POST',

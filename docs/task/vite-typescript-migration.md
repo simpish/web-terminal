@@ -1,7 +1,23 @@
-# Vite + TypeScript Migration Plan
+# Vite+ (Vite Plus) Migration Plan
 
 **Status:** Planning
 **Created:** 2026-04-01
+
+---
+
+## 0. Why Vite+ Instead of Plain Vite
+
+[Vite+](https://viteplus.dev/) is VoidZero's unified toolchain for web development. Unlike plain Vite (which only handles dev server + build), Vite+ bundles everything into one tool:
+
+- **Vite dev/build** (Rolldown-powered)
+- **Vitest** (testing)
+- **Oxlint** (linting, 50-100x faster than ESLint)
+- **Oxfmt** (formatting, 30x faster than Prettier)
+- **TypeScript type-checking** (via tsgolint)
+
+All configured in a single `vite.config.ts`. One CLI (`vp`) replaces `npx vite`, `npx tsc`, `eslint`, `prettier`, and `vitest`.
+
+Install: `curl -fsSL https://vite.plus | bash`
 
 ---
 
@@ -17,7 +33,6 @@ Current codebase is procedural -- functions operating on shared global state. Cl
 
 ### No Heavy Framework
 
-- **Astro is unnecessary** -- it's Vite-based itself, designed for content-heavy sites. Overkill for a single-page terminal UI
 - **No React/Vue/Svelte** -- vanilla TypeScript with DOM manipulation is sufficient for this scale
 - **CSS stays as-is** -- `index.css` with CSS variables and themes works well
 
@@ -47,14 +62,15 @@ web-terminal/
       input.ts           # Textarea send/run/flush, auto-resize
       browser.ts         # File browser: navigate, render, cd, hidden toggle
       theme.ts           # Theme select, localStorage persistence
-  index.html             # Vite entry HTML (<script src="/src/main.ts">)
+  index.html             # Vite+ entry HTML (<script src="/src/main.ts">)
   index.css              # No changes (imported from main.ts)
   server.js              # dist/ serving support added (3 lines)
-  vite.config.ts         # Proxy /api/* to Node backend
-  tsconfig.json
-  package.json           # vite + typescript as devDependencies only
+  vite.config.ts         # Unified config: dev server, build, lint, fmt, test
+  package.json           # vite-plus as single devDependency
   dist/                  # Production build output (gitignored)
 ```
+
+Note: No separate `tsconfig.json` needed -- Vite+ manages TypeScript configuration within `vite.config.ts`.
 
 ---
 
@@ -150,12 +166,12 @@ init()
 
 ---
 
-## 4. Vite Configuration
+## 4. Vite+ Configuration
 
 ### `vite.config.ts`
 
 ```typescript
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vite-plus'
 
 export default defineConfig({
   root: '.',
@@ -172,39 +188,43 @@ export default defineConfig({
       },
     },
   },
+  lint: {
+    ignorePatterns: ['dist/**', 'server.js'],
+  },
+  fmt: {
+    // Oxfmt defaults are fine
+  },
+  test: {
+    include: ['src/**/*.test.ts'],
+  },
 })
 ```
 
-### `tsconfig.json`
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2020",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "skipLibCheck": true,
-    "outDir": "dist",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"]
-  },
-  "include": ["src"]
-}
-```
+Single config file replaces what would have been separate `tsconfig.json`, `.eslintrc`, `.prettierrc`, and `vitest.config.ts`.
 
 ---
 
 ## 5. Development Workflow (After Migration)
 
 ```bash
+# Install Vite+ (one-time)
+curl -fsSL https://vite.plus | bash
+
+# Install project dependencies
+vp install
+
 # Development (two terminals)
 node server.js &          # API server on port 7681
-npx vite                  # Frontend dev server on port 5173 (proxies /api to 7681)
+vp dev                    # Frontend dev server on port 5173 (proxies /api to 7681)
+
+# Static checks (lint + format + type-check in one command)
+vp check
+
+# Run tests
+vp test
 
 # Production build
-npx vite build            # Outputs to dist/
+vp build                  # Outputs to dist/
 node server.js            # Serves dist/ + API
 ```
 
@@ -214,21 +234,21 @@ node server.js            # Serves dist/ + API
 
 ### Phase 1: Scaffolding (no behavior changes)
 
-- [ ] Create `package.json` with vite + typescript as devDependencies
-- [ ] Create `tsconfig.json`
-- [ ] Create `vite.config.ts` with proxy config
+- [ ] Install Vite+: `curl -fsSL https://vite.plus | bash`
+- [ ] Create `package.json` with `vite-plus` as single devDependency
+- [ ] Create `vite.config.ts` with dev server proxy, lint, fmt config
 - [ ] Add `dist/` and `node_modules/` to `.gitignore`
-- [ ] `npm install`
+- [ ] `vp install`
 
 **Verify:** `node server.js` still works as before. Nothing changed functionally.
 
-### Phase 2: Vite Entry Point
+### Phase 2: Vite+ Entry Point
 
 - [ ] Update `index.html`: `<script src="/index.js">` -> `<script type="module" src="/src/main.ts">`
 - [ ] Remove `<link rel="stylesheet" href="/index.css">` (CSS imported from main.ts)
 - [ ] Create `src/main.ts`: import CSS + copy entire index.js content (TS is superset of JS)
 
-**Verify:** `npx vite` serves the app, `/api/*` proxies to `node server.js`.
+**Verify:** `vp dev` serves the app, `/api/*` proxies to `node server.js`.
 
 ### Phase 3: Extract Core Modules
 
@@ -252,18 +272,18 @@ node server.js            # Serves dist/ + API
 
 **Verify:** Test after each extraction. Each module is independent.
 
-### Phase 5: Strict Type Safety
+### Phase 5: Strict Type Safety + Lint/Format
 
-- [ ] Enable `strict: true` (should already be set)
+- [ ] Run `vp check` -- fix all lint, format, and type errors in one pass
 - [ ] Add proper DOM type assertions (`as HTMLButtonElement`, etc.)
 - [ ] Create typed `$()` helper for DOM queries
 - [ ] Remove all remaining `any` types
-- [ ] Run `npx tsc --noEmit` to verify
+- [ ] Ensure `vp check` passes cleanly
 
 ### Phase 6: Production Wiring
 
 - [ ] Update `server.js`: prefer `dist/` for static serving (3-line change)
-- [ ] Add `package.json` scripts: `"dev": "vite"`, `"build": "vite build"`
+- [ ] Add `package.json` scripts: `"dev": "vp dev"`, `"build": "vp build"`, `"check": "vp check"`
 - [ ] Optionally update `install.sh` with build guard
 - [ ] Update `CLAUDE.md` with new dev workflow
 - [ ] Delete original `index.js` (fully replaced by `src/`)
@@ -292,10 +312,11 @@ Fallback: if `dist/` doesn't exist, serves from project root (backward compatibl
 | Risk | Mitigation |
 |------|-----------|
 | Breaking `node server.js` production flow | 3-line change with fallback to project root |
-| Vite proxy missing API routes | Simple `/api` prefix match covers all 13 routes |
-| ttyd iframe URLs bypass Vite | Correct -- direct connection to ttyd ports, no change needed |
-| TS strictness surfacing bugs | Start permissive in Phase 2, enable strict in Phase 5 |
-| CSS import order issues | Single CSS file, deterministic Vite handling |
+| Vite+ proxy missing API routes | Standard Vite proxy config; simple `/api` prefix match covers all 13 routes |
+| ttyd iframe URLs bypass Vite+ | Correct -- direct connection to ttyd ports, no change needed |
+| Vite+ still in early phase | Core dev/build uses battle-tested Vite under the hood; lint/fmt are optional |
+| TS strictness surfacing bugs | Start permissive in Phase 2, fix with `vp check` in Phase 5 |
+| CSS import order issues | Single CSS file, deterministic handling |
 | install.sh breaks | `server.js` path unchanged; optional build guard for `dist/` |
 
 ---
@@ -305,5 +326,17 @@ Fallback: if `dist/` doesn't exist, serves from project root (backward compatibl
 - **No state management library** (Zustand etc.) -- plain object in `state.ts` is sufficient
 - **No CSS framework/modules** -- existing CSS variables work well
 - **No server.js ESM/TS conversion** -- separate concern, future task
-- **No server bundler** -- Vite is frontend-only
-- **No Astro** -- overhead with no benefit for single-page app
+- **No server bundler** -- Vite+ is frontend-only
+- **No Astro/Next.js** -- overhead with no benefit for single-page app
+- **No separate ESLint/Prettier** -- Vite+ includes Oxlint + Oxfmt
+
+---
+
+## References
+
+- [Vite+ Official Site](https://viteplus.dev/)
+- [Getting Started Guide](https://viteplus.dev/guide/)
+- [Configuration Reference](https://viteplus.dev/config/)
+- [GitHub: voidzero-dev/vite-plus](https://github.com/voidzero-dev/vite-plus)
+- [Announcing Vite+](https://voidzero.dev/posts/announcing-vite-plus)
+- [Announcing Vite+ Alpha](https://voidzero.dev/posts/announcing-vite-plus-alpha)
