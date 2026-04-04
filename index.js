@@ -160,6 +160,7 @@ async function deleteSession(name) {
 
 let currentPort = null;
 let currentTtydHost = null;
+let termZoom = parseFloat(localStorage.getItem('termZoom')) || 1.0;
 
 async function switchSession(name) {
   currentSession = name;
@@ -182,6 +183,17 @@ async function switchSession(name) {
   if (window.innerWidth < 768) closeSidebar();
 }
 
+function applyTermZoom() {
+  const frame = document.getElementById('termFrame');
+  if (frame) {
+    frame.style.transform = `scale(${termZoom})`;
+    frame.style.transformOrigin = 'top left';
+    frame.style.width = (100 / termZoom) + '%';
+    frame.style.height = (100 / termZoom) + '%';
+  }
+  document.getElementById('fontLabel').textContent = Math.round(termZoom * 100) + '%';
+}
+
 function loadTermFrame(url) {
   // Replace iframe entirely to avoid beforeunload dialog
   const wrap = document.getElementById('termWrap');
@@ -193,6 +205,7 @@ function loadTermFrame(url) {
   wrap.insertBefore(newFrame, wrap.firstChild);
   setTimeout(() => {
     newFrame.src = url;
+    applyTermZoom();
     document.getElementById('connDot').classList.remove('off');
   }, 300);
 }
@@ -202,6 +215,21 @@ document.getElementById('reloadBtn').addEventListener('click', () => {
   if (currentPort) {
     loadTermFrame(`http://${currentTtydHost || HOST}:${currentPort}`);
   }
+});
+
+// Font size (zoom) controls
+document.getElementById('fontLabel').textContent = Math.round(termZoom * 100) + '%';
+
+document.getElementById('fontPlus').addEventListener('click', () => {
+  termZoom = Math.min(termZoom + 0.1, 3.0);
+  localStorage.setItem('termZoom', termZoom);
+  applyTermZoom();
+});
+
+document.getElementById('fontMinus').addEventListener('click', () => {
+  termZoom = Math.max(termZoom - 0.1, 0.3);
+  localStorage.setItem('termZoom', termZoom);
+  applyTermZoom();
 });
 
 // Re-session button - kill session + tmux, recreate at same directory
