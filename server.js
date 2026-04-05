@@ -256,6 +256,10 @@ function listDirAll(dirPath) {
 
 // --- HTTP server ---
 
+// --- Upload directory ---
+const UPLOAD_DIR = path.join(HOME, 'uploads');
+try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch {}
+
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -263,6 +267,50 @@ function parseBody(req) {
     req.on('end', () => {
       try { resolve(JSON.parse(body)); }
       catch { resolve({}); }
+    });
+    req.on('error', reject);
+  });
+}
+
+function parseMultipart(req) {
+  return new Promise((resolve, reject) => {
+    const boundary = req.headers['content-type']?.match(/boundary=(.+)/)?.[1];
+    if (!boundary) return reject(new Error('No boundary'));
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      const buf = Buffer.concat(chunks);
+      const sep = Buffer.from('--' + boundary);
+      const parts = [];
+      let start = 0;
+      while (true) {
+        const idx = buf.indexOf(sep, start);
+        if (idx === -1) break;
+        if (start > 0) {
+          // Extract part between previous boundary and this one
+          // Skip \r\n after boundary, and \r\n before next boundary
+          let partStart = start;
+          let partEnd = idx - 2; // skip trailing \r\n
+          if (partEnd > partStart) {
+            const partBuf = buf.slice(partStart, partEnd);
+            const headerEnd = partBuf.indexOf('\r\n\r\n');
+            if (headerEnd !== -1) {
+              const headers = partBuf.slice(0, headerEnd).toString();
+              const body = partBuf.slice(headerEnd + 4);
+              const nameMatch = headers.match(/name="([^"]+)"/);
+              const filenameMatch = headers.match(/filename="([^"]+)"/);
+              parts.push({
+                name: nameMatch?.[1],
+                filename: filenameMatch?.[1],
+                data: body,
+                headers,
+              });
+            }
+          }
+        }
+        start = idx + sep.length + 2; // skip boundary + \r\n
+      }
+      resolve(parts);
     });
     req.on('error', reject);
   });
@@ -335,6 +383,18 @@ const server = http.createServer(async (req, res) => {
     return json(res, showHidden ? listDirAll(body.path) : listDir(body.path));
   }
 
+  if (pathname === '/api/capture' && req.method === 'POST') {
+    const body = await parseBody(req);
+    const name = body.session;
+    if (!name) return json(res, { error: 'session required' }, 400);
+    try {
+      const text = tmuxExec(['capture-pane', '-t', name, '-p']);
+      return json(res, { ok: true, text });
+    } catch (e) {
+      return json(res, { ok: false, error: e.message });
+    }
+  }
+
   if (pathname === '/api/send-keys' && req.method === 'POST') {
     const body = await parseBody(req);
     return json(res, tmuxSendKeys(body.session, body.keys));
@@ -350,6 +410,24 @@ const server = http.createServer(async (req, res) => {
     return json(res, tmuxSendText(body.session, body.text));
   }
 
+  if (pathname === '/api/upload' && req.method === 'POST') {
+    try {
+      const parts = await parseMultipart(req);
+      const filePart = parts.find(p => p.name === 'file');
+      if (!filePart || !filePart.filename) {
+        return json(res, { ok: false, error: 'no file' }, 400);
+      }
+      // Sanitize filename, keep extension
+      const ext = path.extname(filePart.filename).toLowerCase() || '.png';
+      const safeName = `img_${Date.now()}${ext}`;
+      const filePath = path.join(UPLOAD_DIR, safeName);
+      fs.writeFileSync(filePath, filePart.data);
+      return json(res, { ok: true, path: filePath, name: safeName });
+    } catch (e) {
+      return json(res, { ok: false, error: e.message }, 500);
+    }
+  }
+
   if (pathname === '/api/send-literal' && req.method === 'POST') {
     const body = await parseBody(req);
     return json(res, tmuxSendLiteral(body.session, body.text));
@@ -362,6 +440,11 @@ const server = http.createServer(async (req, res) => {
     '.js': 'application/javascript; charset=utf-8',
     '.json': 'application/json; charset=utf-8',
     '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.avif': 'image/avif',
     '.svg': 'image/svg+xml',
     '.ico': 'image/x-icon',
   };

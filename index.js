@@ -1,556 +1,744 @@
-const HOST = location.hostname;
-let currentSession = null;
+// ============================================================
+// API Layer — all fetch() calls in one place
+// ============================================================
+const Api = {
+  host: location.hostname,
 
-// Prevent page scroll on everything except iframe and textarea
-document.addEventListener('touchmove', e => {
-  if (e.target.closest('iframe') || e.target.closest('textarea') || e.target.closest('.btn-row')) return;
-  e.preventDefault();
-}, { passive: false });
+  _post(url, body) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(r => r.json());
+  },
 
-// ========== Sidebar ==========
-const sidebar = document.getElementById('sidebar');
-const overlay = document.getElementById('overlay');
+  getHome() { return fetch('/api/home').then(r => r.json()); },
+  fetchSessions() { return fetch('/api/sessions').then(r => r.json()); },
 
-function openSidebar() { sidebar.classList.add('open'); overlay.classList.add('show'); }
-function closeSidebar() { sidebar.classList.remove('open'); overlay.classList.remove('show'); }
+  createSession(name, cwd) { return this._post('/api/sessions', { name, cwd }); },
+  deleteSession(name) {
+    return fetch('/api/sessions', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }).then(r => r.json());
+  },
+  renameSession(oldName, newName) {
+    return fetch('/api/sessions', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ oldName, newName }),
+    }).then(r => r.json());
+  },
 
-document.getElementById('openSidebar').addEventListener('click', openSidebar);
-document.getElementById('closeSidebar').addEventListener('click', closeSidebar);
-overlay.addEventListener('click', closeSidebar);
+  connect(session) { return this._post('/api/connect', { session }); },
+  resession(session) { return this._post('/api/resession', { session }); },
+  sendKeys(session, keys) { return this._post('/api/send-keys', { session, keys }); },
+  sendText(session, text) { return this._post('/api/send-text', { session, text }); },
+  sendLiteral(session, text) { return this._post('/api/send-literal', { session, text }); },
+  scroll(session, direction) { return this._post('/api/scroll', { session, direction }); },
+  capture(session) { return this._post('/api/capture', { session }); },
+  ls(path, showHidden) { return this._post('/api/ls', { path, showHidden }); },
 
-// ========== Sessions ==========
-async function fetchSessions() {
-  const res = await fetch('/api/sessions');
-  const sessions = await res.json();
-  renderSessions(sessions);
-  return sessions;
-}
+  uploadImage(file) {
+    const form = new FormData();
+    form.append('file', file);
+    return fetch('/api/upload', { method: 'POST', body: form }).then(r => r.json());
+  },
+};
 
-function renderSessions(sessions) {
-  const list = document.getElementById('sessionList');
-  list.innerHTML = sessions.map(s => `
-    <div class="session-item ${s.name === currentSession ? 'active' : ''}" data-session="${s.name}">
-      <span>${s.name}</span>
-      <button class="del" data-del="${s.name}">&times;</button>
-    </div>
-  `).join('');
+// ============================================================
+// Model — single source of truth + pub/sub
+// ============================================================
+const AppModel = {
+  // State
+  currentSession: null,
+  currentPort: null,
+  currentTtydHost: null,
+  termZoom: parseFloat(localStorage.getItem('termZoom')) || 1.0,
+  inScrollMode: false,
+  browserPath: '',
+  browserLoaded: false,
+  browserMode: 'browse',
+  showHidden: false,
+  homeDir: '/',
+  claudeRowLocked: false,
+  theme: localStorage.getItem('theme') || 'github-dark',
 
-  list.querySelectorAll('.session-item').forEach(el => {
-    el.addEventListener('click', e => {
-      if (e.target.closest('.del')) return;
-      switchSession(el.dataset.session);
+  // Pub/sub
+  _listeners: {},
+  on(event, fn) {
+    (this._listeners[event] ||= []).push(fn);
+  },
+  emit(event, data) {
+    (this._listeners[event] || []).forEach(fn => fn(data));
+  },
+
+  // Setters — mutate + emit
+  setSession(name, port, host) {
+    this.currentSession = name;
+    this.currentPort = port;
+    this.currentTtydHost = host;
+    this.inScrollMode = false;
+    if (name) localStorage.setItem('lastSession', name);
+    this.emit('session-changed', { name, port, host });
+  },
+  setTermZoom(zoom) {
+    this.termZoom = zoom;
+    localStorage.setItem('termZoom', zoom);
+    this.emit('zoom-changed', zoom);
+  },
+  setScrollMode(on) {
+    this.inScrollMode = on;
+    this.emit('scroll-mode-changed', on);
+  },
+  setBrowserPath(path) {
+    this.browserPath = path;
+    this.emit('browser-path-changed', path);
+  },
+  setBrowserMode(mode) {
+    this.browserMode = mode;
+    this.emit('browser-mode-changed', mode);
+  },
+  setShowHidden(val) {
+    this.showHidden = val;
+    this.emit('show-hidden-changed', val);
+  },
+  setTheme(theme) {
+    this.theme = theme;
+    localStorage.setItem('theme', theme);
+    this.emit('theme-changed', theme);
+  },
+};
+
+// ============================================================
+// SidebarPresenter
+// ============================================================
+const SidebarPresenter = {
+  init(model) {
+    this.model = model;
+    this.el = document.getElementById('sidebar');
+    this.overlay = document.getElementById('overlay');
+
+    document.getElementById('openSidebar').addEventListener('click', () => this.open());
+    document.getElementById('closeSidebar').addEventListener('click', () => this.close());
+    this.overlay.addEventListener('click', () => this.close());
+
+    model.on('sidebar:open', () => this.open());
+    model.on('session-changed', () => {
+      if (window.innerWidth < 768) this.close();
     });
-  });
-  list.querySelectorAll('.del').forEach(el => {
-    el.addEventListener('click', () => deleteSession(el.dataset.del));
-  });
-}
+  },
+  open() { this.el.classList.add('open'); this.overlay.classList.add('show'); },
+  close() { this.el.classList.remove('open'); this.overlay.classList.remove('show'); },
+};
 
-// ========== Rename session (topbar pencil button) ==========
-document.getElementById('renameBtn').addEventListener('click', () => {
-  if (!currentSession) return;
-  const label = document.getElementById('sessionName');
-  const btn = document.getElementById('renameBtn');
-  const oldName = currentSession;
+// ============================================================
+// SessionPresenter
+// ============================================================
+const SessionPresenter = {
+  init(model) {
+    this.model = model;
+    this.listEl = document.getElementById('sessionList');
+    this.nameEl = document.getElementById('sessionName');
+    this.renameBtn = document.getElementById('renameBtn');
 
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'rename-inline';
-  input.value = oldName;
-  label.replaceWith(input);
-  btn.style.display = 'none';
-  input.focus();
-  input.select();
+    document.getElementById('addSession').addEventListener('click', () => {
+      model.setBrowserMode('new-session');
+      model.emit('sidebar:open');
+      TabsPresenter.switchTo('browserPanel');
+      BrowserPresenter.browseTo(model.homeDir);
+    });
 
-  const commit = async () => {
-    const newName = input.value.trim();
-    const span = document.createElement('span');
-    span.className = 'session-label';
-    span.id = 'sessionName';
+    this.renameBtn.addEventListener('click', () => this._startRename());
+    model.on('session-changed', () => this._onSessionChanged());
+    model.on('sessions-loaded', sessions => this._render(sessions));
+  },
 
-    if (newName && newName !== oldName) {
-      const res = await fetch('/api/sessions', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ oldName, newName })
+  async switchTo(name) {
+    const data = await Api.connect(name);
+    if (data.ok) {
+      this.model.setSession(name, data.port, data.host || Api.host);
+    }
+  },
+
+  async reload() {
+    const sessions = await Api.fetchSessions();
+    this.model.emit('sessions-loaded', sessions);
+    return sessions;
+  },
+
+  _onSessionChanged() {
+    this.nameEl.textContent = this.model.currentSession || '--';
+    this.reload();
+  },
+
+  _render(sessions) {
+    const current = this.model.currentSession;
+    this.listEl.innerHTML = sessions.map(s => `
+      <div class="session-item ${s.name === current ? 'active' : ''}" data-session="${s.name}">
+        <span>${s.name}</span>
+        <button class="del" data-del="${s.name}">&times;</button>
+      </div>
+    `).join('');
+
+    this.listEl.querySelectorAll('.session-item').forEach(el => {
+      el.addEventListener('click', e => {
+        if (e.target.closest('.del')) return;
+        this.switchTo(el.dataset.session);
       });
-      const data = await res.json();
-      if (data.ok) {
-        currentSession = data.name;
-        span.textContent = data.name;
-        localStorage.setItem('lastSession', data.name);
-        // Reconnect iframe to new ttyd port
-        if (data.port) {
-          currentPort = data.port;
-          currentTtydHost = HOST;
-          setTimeout(() => loadTermFrame(`http://${currentTtydHost}:${data.port}`), 500);
+    });
+    this.listEl.querySelectorAll('.del').forEach(el => {
+      el.addEventListener('click', () => this._delete(el.dataset.del));
+    });
+  },
+
+  async _delete(name) {
+    if (!confirm(`Delete "${name}"?`)) return;
+    await Api.deleteSession(name);
+    if (this.model.currentSession === name) {
+      this.model.currentSession = null;
+      document.getElementById('termFrame').src = 'about:blank';
+      this.nameEl.textContent = '--';
+    }
+    this.reload();
+  },
+
+  _startRename() {
+    const model = this.model;
+    if (!model.currentSession) return;
+    const oldName = model.currentSession;
+    const btn = this.renameBtn;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'rename-inline';
+    input.value = oldName;
+    this.nameEl.replaceWith(input);
+    btn.style.display = 'none';
+    input.focus();
+    input.select();
+
+    const commit = async () => {
+      const newName = input.value.trim();
+      const span = document.createElement('span');
+      span.className = 'session-label';
+      span.id = 'sessionName';
+
+      if (newName && newName !== oldName) {
+        const data = await Api.renameSession(oldName, newName);
+        if (data.ok) {
+          span.textContent = data.name;
+          model.setSession(data.name, data.port || model.currentPort, Api.host);
+        } else {
+          span.textContent = oldName;
         }
-        fetchSessions();
       } else {
         span.textContent = oldName;
       }
-    } else {
-      span.textContent = oldName;
-    }
 
-    input.replaceWith(span);
-    btn.style.display = '';
-  };
+      input.replaceWith(span);
+      this.nameEl = span;
+      btn.style.display = '';
+    };
 
-  input.addEventListener('blur', commit);
-  input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-    if (e.key === 'Escape') { input.value = oldName; input.blur(); }
-  });
-});
-
-let browserMode = 'browse'; // 'browse' or 'new-session'
-
-document.getElementById('addSession').addEventListener('click', () => {
-  // Switch to Browse tab in new-session mode
-  browserMode = 'new-session';
-  document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
-  document.querySelector('[data-panel="browserPanel"]').classList.add('active');
-  document.getElementById('browserPanel').classList.add('active');
-  // Show create button, hide cd button
-  document.getElementById('cdBtn').style.display = 'none';
-  document.getElementById('createSessionBtn').style.display = '';
-  // Browse starting at home directory
-  browseTo(HOME_DIR);
-});
-
-// When switching back to browse tab normally, reset mode
-document.getElementById('createSessionBtn').addEventListener('click', async () => {
-  if (!browserPath) return;
-  const dirName = browserPath.split('/').filter(Boolean).pop() || 'main';
-  const res = await fetch('/api/sessions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: dirName, cwd: browserPath })
-  });
-  const data = await res.json();
-  // Reset browser mode
-  browserMode = 'browse';
-  document.getElementById('cdBtn').style.display = '';
-  document.getElementById('createSessionBtn').style.display = 'none';
-  // Switch to sessions tab
-  document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
-  document.querySelector('[data-panel="sessionsPanel"]').classList.add('active');
-  document.getElementById('sessionsPanel').classList.add('active');
-  await fetchSessions();
-  switchSession(data.name);
-});
-
-async function deleteSession(name) {
-  if (!confirm(`Delete "${name}"?`)) return;
-  await fetch('/api/sessions', {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name })
-  });
-  if (currentSession === name) {
-    currentSession = null;
-    document.getElementById('termFrame').src = 'about:blank';
-    document.getElementById('sessionName').textContent = '--';
-  }
-  fetchSessions();
-}
-
-let currentPort = null;
-let currentTtydHost = null;
-let termZoom = parseFloat(localStorage.getItem('termZoom')) || 1.0;
-
-async function switchSession(name) {
-  currentSession = name;
-  inScrollMode = false;
-  document.getElementById('sessionName').textContent = name;
-  localStorage.setItem('lastSession', name);
-  fetchSessions();
-
-  const res = await fetch('/api/connect', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session: name })
-  });
-  const data = await res.json();
-  if (data.ok) {
-    currentPort = data.port;
-    currentTtydHost = data.host || HOST;
-    loadTermFrame(`http://${currentTtydHost}:${data.port}`);
-  }
-  if (window.innerWidth < 768) closeSidebar();
-}
-
-function applyTermZoom() {
-  const frame = document.getElementById('termFrame');
-  if (frame) {
-    frame.style.transform = `scale(${termZoom})`;
-    frame.style.transformOrigin = 'top left';
-    frame.style.width = (100 / termZoom) + '%';
-    frame.style.height = (100 / termZoom) + '%';
-  }
-  document.getElementById('fontLabel').textContent = Math.round(termZoom * 100) + '%';
-}
-
-function loadTermFrame(url) {
-  // Replace iframe entirely to avoid beforeunload dialog
-  const wrap = document.getElementById('termWrap');
-  const oldFrame = document.getElementById('termFrame');
-  if (oldFrame) oldFrame.remove();
-  const newFrame = document.createElement('iframe');
-  newFrame.id = 'termFrame';
-  newFrame.src = 'about:blank';
-  wrap.insertBefore(newFrame, wrap.firstChild);
-  setTimeout(() => {
-    newFrame.src = url;
-    applyTermZoom();
-    document.getElementById('connDot').classList.remove('off');
-  }, 300);
-}
-
-// Reload button - reload iframe
-document.getElementById('reloadBtn').addEventListener('click', () => {
-  if (currentPort) {
-    loadTermFrame(`http://${currentTtydHost || HOST}:${currentPort}`);
-  }
-});
-
-// Font size (zoom) controls
-document.getElementById('fontLabel').textContent = Math.round(termZoom * 100) + '%';
-
-document.getElementById('fontPlus').addEventListener('click', () => {
-  termZoom = Math.min(termZoom + 0.1, 3.0);
-  localStorage.setItem('termZoom', termZoom);
-  applyTermZoom();
-});
-
-document.getElementById('fontMinus').addEventListener('click', () => {
-  termZoom = Math.max(termZoom - 0.1, 0.3);
-  localStorage.setItem('termZoom', termZoom);
-  applyTermZoom();
-});
-
-// Re-session button - kill session + tmux, recreate at same directory
-document.getElementById('resessionBtn').addEventListener('click', async () => {
-  if (!currentSession) return;
-  const res = await fetch('/api/resession', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session: currentSession })
-  });
-  const data = await res.json();
-  if (data.ok) {
-    currentPort = data.port;
-    currentTtydHost = data.host || HOST;
-    setTimeout(() => loadTermFrame(`http://${currentTtydHost}:${data.port}`), 2000);
-  }
-});
-
-
-// ========== Tap vs scroll detection for button rows ==========
-function setupBtnRow(rowEl, handler) {
-  rowEl.addEventListener('click', e => {
-    const btn = e.target.closest('.kb');
-    if (btn) {
-      handler(btn);
-      // Prevent iframe from getting focus and showing keyboard
-      document.activeElement?.blur();
-    }
-  });
-  rowEl.addEventListener('mousedown', e => {
-    if (e.target.closest('.kb')) e.preventDefault();
-  });
-}
-
-// ========== Key buttons ==========
-// Menu button - direct event since setupBtnRow tap detection can be unreliable
-document.getElementById('menuBtn2').addEventListener('click', openSidebar);
-
-setupBtnRow(document.getElementById('keysRow'), btn => {
-  if (btn.id === 'menuBtn2') {
-    openSidebar();
-  } else if (btn.id === 'claudeToggle') {
-    toggleClaude();
-  } else if (btn.dataset.key) {
-    sendKey(btn.dataset.key);
-  } else if (btn.dataset.scroll) {
-    scrollTerminal(btn.dataset.scroll);
-  }
-});
-
-let claudeRowLocked = false;
-let inScrollMode = false;
-function toggleClaude() {
-  const row = document.getElementById('claudeRow');
-  const toggle = document.getElementById('claudeToggle');
-  const opening = row.classList.contains('hidden');
-  row.classList.toggle('hidden');
-  toggle.classList.toggle('active');
-  if (opening) {
-    claudeRowLocked = true;
-    row.style.pointerEvents = 'none';
-    row.style.opacity = '0.5';
-    setTimeout(() => {
-      claudeRowLocked = false;
-      row.style.pointerEvents = '';
-      row.style.opacity = '';
-    }, 400);
-  }
-}
-
-async function scrollTerminal(direction) {
-  if (!currentSession) return;
-  await fetch('/api/scroll', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session: currentSession, direction })
-  });
-  if (direction === 'exit') {
-    inScrollMode = false;
-    // Reload iframe to restore input
-    if (currentPort) {
-      setTimeout(() => loadTermFrame(`http://${currentTtydHost || HOST}:${currentPort}`), 300);
-    }
-  } else if (direction === 'up' || direction === 'down') {
-    inScrollMode = true;
-  }
-}
-
-// ========== Claude shortcuts ==========
-document.getElementById('claudeRow').addEventListener('click', e => {
-  const btn = e.target.closest('.kb');
-  if (btn && btn.dataset.cmd) {
-    insertClaudeCmd(btn.dataset.cmd);
-  }
-});
-
-function insertClaudeCmd(cmd) {
-  const input = document.getElementById('cmdInput');
-  input.value = cmd;
-  input.style.height = 'auto';
-  input.style.height = input.scrollHeight + 'px';
-  input.focus();
-}
-
-// ========== Send keys ==========
-async function exitScrollIfNeeded() {
-  if (!inScrollMode) return;
-  await fetch('/api/scroll', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session: currentSession, direction: 'exit' })
-  });
-  inScrollMode = false;
-}
-
-async function flushInput() {
-  const input = document.getElementById('cmdInput');
-  const text = input.value;
-  if (!text) return;
-  await exitScrollIfNeeded();
-  try {
-    const res = await fetch('/api/send-literal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session: currentSession, text })
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { input.value = oldName; input.blur(); }
     });
-    const data = await res.json();
-    if (!data.ok) {
-      console.error('send-literal failed:', data.error);
-      return;
+  },
+};
+
+// ============================================================
+// TerminalPresenter
+// ============================================================
+const TerminalPresenter = {
+  init(model) {
+    this.model = model;
+    this.wrap = document.getElementById('termWrap');
+    this.dot = document.getElementById('connDot');
+    this.fontLabel = document.getElementById('fontLabel');
+
+    this._updateLabel();
+
+    document.getElementById('reloadBtn').addEventListener('click', () => this.reload());
+    document.getElementById('fontPlus').addEventListener('click', () => {
+      model.setTermZoom(Math.min(model.termZoom + 0.1, 3.0));
+    });
+    document.getElementById('fontMinus').addEventListener('click', () => {
+      model.setTermZoom(Math.max(model.termZoom - 0.1, 0.3));
+    });
+    document.getElementById('resessionBtn').addEventListener('click', () => this._resession());
+
+    model.on('session-changed', ({ port, host }) => {
+      if (port && host) this.load(`http://${host}:${port}`);
+    });
+    model.on('zoom-changed', () => {
+      this._applyZoom();
+      this._updateLabel();
+    });
+  },
+
+  load(url) {
+    const old = document.getElementById('termFrame');
+    if (old) old.remove();
+    const frame = document.createElement('iframe');
+    frame.id = 'termFrame';
+    frame.src = 'about:blank';
+    this.wrap.insertBefore(frame, this.wrap.firstChild);
+    setTimeout(() => {
+      frame.src = url;
+      this._applyZoom();
+      this.dot.classList.remove('off');
+    }, 300);
+  },
+
+  reload() {
+    const m = this.model;
+    if (m.currentPort) this.load(`http://${m.currentTtydHost}:${m.currentPort}`);
+  },
+
+  _applyZoom() {
+    const frame = document.getElementById('termFrame');
+    if (!frame) return;
+    const z = this.model.termZoom;
+    frame.style.transform = `scale(${z})`;
+    frame.style.transformOrigin = 'top left';
+    frame.style.width = (100 / z) + '%';
+    frame.style.height = (100 / z) + '%';
+  },
+
+  _updateLabel() {
+    this.fontLabel.textContent = Math.round(this.model.termZoom * 100) + '%';
+  },
+
+  async _resession() {
+    const m = this.model;
+    if (!m.currentSession) return;
+    const data = await Api.resession(m.currentSession);
+    if (data.ok) {
+      setTimeout(() => {
+        m.setSession(m.currentSession, data.port, data.host || Api.host);
+      }, 2000);
     }
-  } catch (e) {
-    console.error('send-literal error:', e);
-    return;
-  }
-  input.value = '';
-  input.style.height = 'auto';
-}
+  },
+};
 
-async function sendKey(key) {
-  if (!currentSession) return;
-  await flushInput();
-  await fetch('/api/send-keys', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session: currentSession, keys: key })
-  });
-}
+// ============================================================
+// InputPresenter
+// ============================================================
+const InputPresenter = {
+  init(model) {
+    this.model = model;
+    this.textarea = document.getElementById('cmdInput');
 
-// ========== Send / Run buttons ==========
-document.getElementById('sendBtn').addEventListener('click', doSend);
-document.getElementById('enterBtn').addEventListener('click', doRun);
+    document.getElementById('sendBtn').addEventListener('click', () => this.doSend());
+    document.getElementById('enterBtn').addEventListener('click', () => this.doRun());
 
-// Send = flush text to terminal (no Enter)
-async function doSend() {
-  if (!currentSession) return;
-  await flushInput();
-}
+    this.textarea.addEventListener('input', () => {
+      this.textarea.style.height = 'auto';
+      this.textarea.style.height = Math.min(this.textarea.scrollHeight, 100) + 'px';
+    });
 
-// Run = flush text + Enter
-async function doRun() {
-  if (!currentSession) return;
-  const input = document.getElementById('cmdInput');
-  const text = input.value;
-  if (text) {
-    await exitScrollIfNeeded();
+    model.on('insert-command', cmd => {
+      this.textarea.value = cmd;
+      this.textarea.style.height = 'auto';
+      this.textarea.style.height = this.textarea.scrollHeight + 'px';
+      // Only focus if keyboard is already open
+      if (document.activeElement === this.textarea) this.textarea.focus();
+    });
+  },
+
+  async exitScrollIfNeeded() {
+    if (!this.model.inScrollMode) return;
+    await Api.scroll(this.model.currentSession, 'exit');
+    this.model.setScrollMode(false);
+  },
+
+  async flush() {
+    const text = this.textarea.value;
+    if (!text) return;
+    await this.exitScrollIfNeeded();
     try {
-      const res = await fetch('/api/send-text', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session: currentSession, text })
-      });
-      const data = await res.json();
-      if (!data.ok) {
-        console.error('send-text failed:', data.error);
-        input.focus();
-        return;
+      const data = await Api.sendLiteral(this.model.currentSession, text);
+      if (!data.ok) { console.error('send-literal failed:', data.error); return; }
+    } catch (e) { console.error('send-literal error:', e); return; }
+    this.textarea.value = '';
+    this.textarea.style.height = 'auto';
+  },
+
+  async doSend() {
+    if (!this.model.currentSession) return;
+    await this.flush();
+  },
+
+  async doRun() {
+    const session = this.model.currentSession;
+    if (!session) return;
+    const text = this.textarea.value;
+    if (text) {
+      await this.exitScrollIfNeeded();
+      try {
+        const data = await Api.sendText(session, text);
+        if (!data.ok) { console.error('send-text failed:', data.error); this.textarea.focus(); return; }
+      } catch (e) { console.error('send-text error:', e); this.textarea.focus(); return; }
+      this.textarea.value = '';
+      this.textarea.style.height = 'auto';
+    } else {
+      await Api.sendKeys(session, 'Enter');
+    }
+  },
+
+  async sendKey(key) {
+    if (!this.model.currentSession) return;
+    await this.flush();
+    await Api.sendKeys(this.model.currentSession, key);
+  },
+};
+
+// ============================================================
+// KeysPresenter
+// ============================================================
+const KeysPresenter = {
+  init(model) {
+    this.model = model;
+
+    document.getElementById('keysRow').addEventListener('click', e => {
+      const btn = e.target.closest('.kb');
+      if (!btn) return;
+      if (btn.id === 'menuBtn2') model.emit('sidebar:open');
+      else if (btn.id === 'reloadBtn' || btn.id === 'copyBtn') { /* handled by own presenter */ }
+      else if (btn.id === 'claudeToggle') this._toggleClaude();
+      else if (btn.dataset.key) InputPresenter.sendKey(btn.dataset.key);
+      else if (btn.dataset.scroll) this._scroll(btn.dataset.scroll);
+    });
+
+    document.getElementById('claudeRow').addEventListener('click', e => {
+      const btn = e.target.closest('.kb');
+      if (btn && btn.dataset.cmd) model.emit('insert-command', btn.dataset.cmd);
+    });
+  },
+
+  _toggleClaude() {
+    const row = document.getElementById('claudeRow');
+    const toggle = document.getElementById('claudeToggle');
+    const opening = row.classList.contains('hidden');
+    row.classList.toggle('hidden');
+    toggle.classList.toggle('active');
+    if (opening) {
+      row.style.pointerEvents = 'none';
+      row.style.opacity = '0.5';
+      setTimeout(() => {
+        row.style.pointerEvents = '';
+        row.style.opacity = '';
+      }, 400);
+    }
+  },
+
+  async _scroll(direction) {
+    const session = this.model.currentSession;
+    if (!session) return;
+    await Api.scroll(session, direction);
+    if (direction === 'exit') {
+      this.model.setScrollMode(false);
+      setTimeout(() => TerminalPresenter.reload(), 300);
+    } else {
+      this.model.setScrollMode(true);
+    }
+  },
+};
+
+// ============================================================
+// BrowserPresenter
+// ============================================================
+const BrowserPresenter = {
+  init(model) {
+    this.model = model;
+    this.crumbsEl = document.getElementById('browserCrumbs');
+    this.listEl = document.getElementById('browserList');
+    this.cdBtn = document.getElementById('cdBtn');
+    this.createBtn = document.getElementById('createSessionBtn');
+
+    this.cdBtn.addEventListener('click', () => this._cdHere());
+    this.createBtn.addEventListener('click', () => this._createSession());
+    document.getElementById('hiddenToggle').addEventListener('click', () => {
+      model.setShowHidden(!model.showHidden);
+      document.getElementById('hiddenToggle').classList.toggle('on', model.showHidden);
+      this.browseTo(model.browserPath);
+    });
+
+    model.on('browser-mode-changed', mode => {
+      this.cdBtn.style.display = mode === 'new-session' ? 'none' : '';
+      this.createBtn.style.display = mode === 'new-session' ? '' : 'none';
+    });
+  },
+
+  async browseTo(path) {
+    this.model.browserLoaded = true;
+    const data = await Api.ls(path, this.model.showHidden);
+    if (!data.ok) return;
+    this.model.setBrowserPath(data.path);
+    this._render(data);
+  },
+
+  _render(data) {
+    // Breadcrumbs
+    const parts = data.path.split('/').filter(Boolean);
+    let crumbHtml = '<button class="browser-crumb" data-path="/">/</button>';
+    let acc = '';
+    for (const p of parts) {
+      acc += '/' + p;
+      crumbHtml += ` <button class="browser-crumb" data-path="${acc}">${p}</button>/`;
+    }
+    this.crumbsEl.innerHTML = crumbHtml;
+    this.crumbsEl.querySelectorAll('.browser-crumb').forEach(el => {
+      el.addEventListener('click', () => this.browseTo(el.dataset.path));
+    });
+
+    // File list
+    let html = '';
+    if (data.path !== '/') {
+      const parent = data.path.split('/').slice(0, -1).join('/') || '/';
+      html += `<div class="browser-item" data-dir="${parent}"><span class="icon">&#8617;</span> ..</div>`;
+    }
+    for (const d of data.dirs) {
+      const full = data.path === '/' ? '/' + d : data.path + '/' + d;
+      html += `<div class="browser-item" data-dir="${full}"><span class="icon">&#128193;</span> ${d}</div>`;
+    }
+    for (const f of data.files) {
+      html += `<div class="browser-item file"><span class="icon">&#128196;</span> ${f}</div>`;
+    }
+    this.listEl.innerHTML = html;
+    this.listEl.querySelectorAll('.browser-item[data-dir]').forEach(el => {
+      el.addEventListener('click', () => this.browseTo(el.dataset.dir));
+    });
+  },
+
+  _cdHere() {
+    const m = this.model;
+    if (!m.currentSession || !m.browserPath) return;
+    Api.sendText(m.currentSession, `cd ${m.browserPath}`);
+    SidebarPresenter.close();
+  },
+
+  async _createSession() {
+    const m = this.model;
+    if (!m.browserPath) return;
+    const dirName = m.browserPath.split('/').filter(Boolean).pop() || 'main';
+    const data = await Api.createSession(dirName, m.browserPath);
+    m.setBrowserMode('browse');
+    TabsPresenter.switchTo('sessionsPanel');
+    SessionPresenter.switchTo(data.name);
+  },
+};
+
+// ============================================================
+// CapturePresenter
+// ============================================================
+const CapturePresenter = {
+  init(model) {
+    this.model = model;
+    this.modal = document.getElementById('captureModal');
+    this.textEl = document.getElementById('captureText');
+
+    document.getElementById('copyBtn').addEventListener('click', () => this._capture());
+    document.getElementById('captureClose').addEventListener('click', () => {
+      this.modal.classList.remove('open');
+    });
+  },
+
+  async _capture() {
+    if (!this.model.currentSession) return;
+    try {
+      const data = await Api.capture(this.model.currentSession);
+      if (data.ok && data.text) {
+        this.textEl.textContent = data.text.replace(/\s+$/, '');
+        this.modal.classList.add('open');
       }
     } catch (e) {
-      console.error('send-text error:', e);
-      input.focus();
+      console.error('capture failed:', e);
+    }
+  },
+};
+
+// ============================================================
+// ThemePresenter
+// ============================================================
+const ThemePresenter = {
+  init(model) {
+    const select = document.getElementById('themeSelect');
+    document.documentElement.setAttribute('data-theme', model.theme);
+    select.value = model.theme;
+    select.addEventListener('change', () => model.setTheme(select.value));
+    model.on('theme-changed', theme => {
+      document.documentElement.setAttribute('data-theme', theme);
+    });
+  },
+};
+
+// ============================================================
+// TabsPresenter
+// ============================================================
+const TabsPresenter = {
+  init(model) {
+    this.model = model;
+    this.tabs = document.querySelectorAll('.sidebar-tab');
+    this.panels = document.querySelectorAll('.sidebar-panel');
+
+    this.tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        this.switchTo(tab.dataset.panel);
+        if (tab.dataset.panel === 'browserPanel' && !model.browserLoaded) {
+          BrowserPresenter.browseTo(model.homeDir);
+        }
+        if (tab.dataset.panel === 'sessionsPanel') {
+          model.setBrowserMode('browse');
+        }
+      });
+    });
+  },
+
+  switchTo(panelId) {
+    this.tabs.forEach(t => t.classList.toggle('active', t.dataset.panel === panelId));
+    this.panels.forEach(p => p.classList.toggle('active', p.id === panelId));
+  },
+};
+
+// ============================================================
+// ImageUploadPresenter
+// ============================================================
+const ImageUploadPresenter = {
+  uploadedImages: [], // [{ path, name, objectUrl }]
+
+  init(model) {
+    this.model = model;
+    this.strip = document.getElementById('imageStrip');
+    this.fileInput = document.getElementById('imageInput');
+
+    document.getElementById('imgBtn').addEventListener('click', () => {
+      this.fileInput.click();
+    });
+
+    this.fileInput.addEventListener('change', () => {
+      const file = this.fileInput.files[0];
+      if (file) this._upload(file);
+      this.fileInput.value = '';
+    });
+  },
+
+  async _upload(file) {
+    const data = await Api.uploadImage(file);
+    if (!data.ok) {
+      console.error('Upload failed:', data.error);
       return;
     }
-    input.value = '';
-    input.style.height = 'auto';
-  } else {
-    // No text, just send Enter
-    await fetch('/api/send-keys', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session: currentSession, keys: 'Enter' })
+    const objectUrl = URL.createObjectURL(file);
+    this.uploadedImages.push({ path: data.path, name: data.name, objectUrl });
+    this._render();
+  },
+
+  _render() {
+    this.strip.innerHTML = this.uploadedImages.map((img, i) => `
+      <div class="img-thumb" data-idx="${i}">
+        <img src="${img.objectUrl}" alt="${img.name}">
+        <button class="img-remove" data-idx="${i}">&times;</button>
+        <div class="img-path">${img.name}</div>
+      </div>
+    `).join('');
+    this.strip.classList.toggle('hidden', this.uploadedImages.length === 0);
+
+    this.strip.querySelectorAll('.img-remove').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.idx);
+        URL.revokeObjectURL(this.uploadedImages[idx].objectUrl);
+        this.uploadedImages.splice(idx, 1);
+        this._render();
+      });
     });
-  }
-  input.focus();
-}
 
-// Auto-resize textarea
-document.getElementById('cmdInput').addEventListener('input', function() {
-  this.style.height = 'auto';
-  this.style.height = Math.min(this.scrollHeight, 100) + 'px';
-});
+    // Click thumbnail to insert path into textarea
+    this.strip.querySelectorAll('.img-thumb').forEach(el => {
+      el.addEventListener('click', e => {
+        if (e.target.closest('.img-remove')) return;
+        const idx = parseInt(el.dataset.idx);
+        const textarea = document.getElementById('cmdInput');
+        const imgPath = this.uploadedImages[idx].path;
+        const pos = textarea.selectionStart;
+        const before = textarea.value.slice(0, pos);
+        const after = textarea.value.slice(pos);
+        textarea.value = before + imgPath + ' ' + after;
+        textarea.focus();
+      });
+    });
+  },
 
-// ========== Sidebar tabs ==========
-document.querySelectorAll('.sidebar-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById(tab.dataset.panel).classList.add('active');
-    if (tab.dataset.panel === 'browserPanel' && !browserLoaded) {
-      browseTo(HOME_DIR);
-    }
-    // Reset browser mode when manually switching tabs
-    if (tab.dataset.panel === 'sessionsPanel') {
-      browserMode = 'browse';
-      document.getElementById('cdBtn').style.display = '';
-      document.getElementById('createSessionBtn').style.display = 'none';
-    }
-  });
-});
+  // Get all image paths and clear the strip
+  consumePaths() {
+    const paths = this.uploadedImages.map(img => img.path);
+    this.uploadedImages.forEach(img => URL.revokeObjectURL(img.objectUrl));
+    this.uploadedImages = [];
+    this._render();
+    return paths;
+  },
+};
 
-// ========== File browser ==========
-let browserPath = '';
-let browserLoaded = false;
-let HOME_DIR = '/';
-fetch('/api/home').then(r => r.json()).then(d => { HOME_DIR = d.home; browserPath = HOME_DIR; });
-let showHidden = false;
-
-async function browseTo(dirPath) {
-  browserLoaded = true;
-  const res = await fetch('/api/ls', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: dirPath, showHidden })
-  });
-  const data = await res.json();
-  if (!data.ok) return;
-  browserPath = data.path;
-  renderBrowser(data);
-}
-
-function renderBrowser(data) {
-  // Breadcrumbs
-  const parts = data.path.split('/').filter(Boolean);
-  let crumbHtml = '<button class="browser-crumb" data-path="/">/</button>';
-  let accumulated = '';
-  for (const p of parts) {
-    accumulated += '/' + p;
-    crumbHtml += ` <button class="browser-crumb" data-path="${accumulated}">${p}</button>/`;
-  }
-  const crumbsEl = document.getElementById('browserCrumbs');
-  crumbsEl.innerHTML = crumbHtml;
-  crumbsEl.querySelectorAll('.browser-crumb').forEach(el => {
-    el.addEventListener('click', () => browseTo(el.dataset.path));
-  });
-
-  // Directory + file list
-  const listEl = document.getElementById('browserList');
-  let html = '';
-
-  // Parent dir
-  if (data.path !== '/') {
-    const parent = data.path.split('/').slice(0, -1).join('/') || '/';
-    html += `<div class="browser-item" data-dir="${parent}"><span class="icon">&#8617;</span> ..</div>`;
-  }
-
-  for (const d of data.dirs) {
-    const full = data.path === '/' ? '/' + d : data.path + '/' + d;
-    html += `<div class="browser-item" data-dir="${full}"><span class="icon">&#128193;</span> ${d}</div>`;
-  }
-  for (const f of data.files) {
-    html += `<div class="browser-item file"><span class="icon">&#128196;</span> ${f}</div>`;
-  }
-
-  listEl.innerHTML = html;
-  listEl.querySelectorAll('.browser-item[data-dir]').forEach(el => {
-    el.addEventListener('click', () => browseTo(el.dataset.dir));
-  });
-}
-
-document.getElementById('cdBtn').addEventListener('click', () => {
-  if (!currentSession || !browserPath) return;
-  fetch('/api/send-text', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session: currentSession, text: `cd ${browserPath}` })
-  });
-  if (window.innerWidth < 768) closeSidebar();
-});
-
-document.getElementById('hiddenToggle').addEventListener('click', () => {
-  showHidden = !showHidden;
-  document.getElementById('hiddenToggle').classList.toggle('on', showHidden);
-  browseTo(browserPath);
-});
-
-// ========== Theme ==========
-const themeSelect = document.getElementById('themeSelect');
-const savedTheme = localStorage.getItem('theme') || 'github-dark';
-document.documentElement.setAttribute('data-theme', savedTheme);
-themeSelect.value = savedTheme;
-
-themeSelect.addEventListener('change', () => {
-  const theme = themeSelect.value;
-  document.documentElement.setAttribute('data-theme', theme);
-  localStorage.setItem('theme', theme);
-});
-
-// ========== Init ==========
+// ============================================================
+// Bootstrap
+// ============================================================
 async function init() {
-  const sessions = await fetchSessions();
+  const homeData = await Api.getHome();
+  AppModel.homeDir = homeData.home;
+  AppModel.browserPath = homeData.home;
+
+  // Focus guard — buttons never steal focus from textarea (keyboard stays as-is)
+  document.querySelectorAll('button, .kb, .act-btn').forEach(el => {
+    el.setAttribute('tabindex', '-1');
+  });
+  // Also apply to dynamically created buttons via MutationObserver
+  new MutationObserver(mutations => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        if (node.matches && node.matches('button, .kb, .act-btn')) {
+          node.setAttribute('tabindex', '-1');
+        }
+        if (node.querySelectorAll) {
+          node.querySelectorAll('button, .kb, .act-btn').forEach(el => {
+            el.setAttribute('tabindex', '-1');
+          });
+        }
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+
+  // Initialize all presenters
+  SidebarPresenter.init(AppModel);
+  SessionPresenter.init(AppModel);
+  TerminalPresenter.init(AppModel);
+  InputPresenter.init(AppModel);
+  KeysPresenter.init(AppModel);
+  BrowserPresenter.init(AppModel);
+  CapturePresenter.init(AppModel);
+  ImageUploadPresenter.init(AppModel);
+  ThemePresenter.init(AppModel);
+  TabsPresenter.init(AppModel);
+
+  // Load sessions
+  const sessions = await Api.fetchSessions();
+  AppModel.emit('sessions-loaded', sessions);
   const last = localStorage.getItem('lastSession');
 
   if (sessions.length === 0) {
-    // No sessions - open sidebar in new-session mode
-    openSidebar();
-    document.getElementById('addSession').click();
+    SidebarPresenter.open();
+    AppModel.setBrowserMode('new-session');
+    TabsPresenter.switchTo('browserPanel');
+    BrowserPresenter.browseTo(AppModel.homeDir);
   } else if (last && sessions.find(s => s.name === last)) {
-    switchSession(last);
+    SessionPresenter.switchTo(last);
   } else {
-    switchSession(sessions[0].name);
+    SessionPresenter.switchTo(sessions[0].name);
   }
 }
 

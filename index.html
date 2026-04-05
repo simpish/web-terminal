@@ -12,6 +12,14 @@
 
 <div class="overlay" id="overlay"></div>
 
+<div class="capture-modal" id="captureModal">
+  <div class="capture-header">
+    <span>Select &amp; Copy</span>
+    <button class="menu-btn" id="captureClose">&times;</button>
+  </div>
+  <div class="capture-text" id="captureText"></div>
+</div>
+
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-header">
     <span>Terminal</span>
@@ -70,6 +78,7 @@
     <div class="btn-row" id="keysRow">
       <button class="kb" id="menuBtn2" style="background:var(--accent);color:var(--bg);">&#9776;</button>
       <button class="kb" id="reloadBtn" style="color:var(--green);">&#x21bb;</button>
+      <button class="kb" id="copyBtn" style="color:var(--yellow);">Copy</button>
       <button class="kb" data-key="Escape">Esc</button>
       <button class="kb" data-key="Tab">Tab</button>
       <button class="kb" data-key="BTab">S-Tab</button>
@@ -95,25 +104,27 @@
 
     <!-- Row 2: Claude shortcuts (hidden by default) -->
     <div class="btn-row claude-row hidden" id="claudeRow">
-      <button class="kb claude" data-cmd="claude">claude</button>
-      <button class="kb claude" data-cmd="claude --dangerously-skip-permissions">--skip</button>
-      <button class="kb claude" data-cmd="claude --resume">--resume</button>
-      <button class="kb claude" data-cmd="claude --dangerously-skip-permissions --resume">--skip --resume</button>
-      <button class="kb claude" data-cmd="claude --model sonnet">--model sonnet</button>
-      <button class="kb claude" data-cmd="claude --model opus">--model opus</button>
+      <button class="kb claude" data-cmd="claude --dangerously-skip-permissions">skip</button>
+      <button class="kb claude" data-cmd="claude --dangerously-skip-permissions --resume">skip-resume</button>
+      <button class="kb claude" data-cmd="claude --resume">resume</button>
+      <button class="kb claude" data-cmd="/exit">/exit</button>
+      <button class="kb claude" data-cmd="/clear">/clear</button>
       <button class="kb claude" data-cmd="/compact">/compact</button>
-      <button class="kb claude" data-cmd="y">y</button>
-      <button class="kb claude" data-cmd="yes">yes</button>
+      <button class="kb claude" data-cmd="/mcp">/mcp</button>
     </div>
 
     <!-- Row 3: Text input + Send + Enter -->
     <div class="input-row">
+      <input type="file" id="imageInput" accept="image/*,.avif" style="display:none;">
+      <button class="act-btn img-btn" id="imgBtn" title="Upload image">&#128247;</button>
       <textarea id="cmdInput" rows="1" placeholder="Input..."
         autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"
       ></textarea>
       <button class="act-btn send-btn" id="sendBtn">Send</button>
       <button class="act-btn enter-btn" id="enterBtn">Run</button>
     </div>
+    <!-- Image preview strip -->
+    <div class="image-strip hidden" id="imageStrip"></div>
   </div>
 </div>
 
