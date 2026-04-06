@@ -524,15 +524,35 @@ const BrowserPresenter = {
   },
 
   _copyPath(p) {
-    navigator.clipboard.writeText(p).then(() => {
+    const done = () => {
+      const prev = this.copyPathBtn.textContent;
       this.copyPathBtn.textContent = 'Copied!';
-      setTimeout(() => { this.copyPathBtn.textContent = 'Copy path'; }, 1000);
-    }).catch(() => {
-      // Fallback: insert into textarea
-      const textarea = document.getElementById('cmdInput');
-      textarea.value += p;
-      textarea.dispatchEvent(new Event('input'));
-    });
+      setTimeout(() => { this.copyPathBtn.textContent = prev; }, 1000);
+    };
+    // Try modern clipboard API first
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(p).then(done).catch(() => this._fallbackCopy(p, done));
+    } else {
+      this._fallbackCopy(p, done);
+    }
+  },
+
+  _fallbackCopy(text, onSuccess) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      if (onSuccess) onSuccess();
+    } catch {
+      // Last resort: insert into input
+      const input = document.getElementById('cmdInput');
+      input.value += text;
+      input.dispatchEvent(new Event('input'));
+    }
+    document.body.removeChild(ta);
   },
 
   _cdHere() {
