@@ -40,9 +40,10 @@ const Api = {
   capture(session) { return this._post('/api/capture', { session }); },
   ls(path, showHidden) { return this._post('/api/ls', { path, showHidden }); },
 
-  uploadImage(file) {
+  uploadImage(file, session) {
     const form = new FormData();
     form.append('file', file);
+    if (session) form.append('session', session);
     return fetch('/api/upload', { method: 'POST', body: form }).then(r => r.json());
   },
 };
@@ -609,11 +610,8 @@ const TabsPresenter = {
 // ImageUploadPresenter
 // ============================================================
 const ImageUploadPresenter = {
-  uploadedImages: [], // [{ path, name, objectUrl }]
-
   init(model) {
     this.model = model;
-    this.strip = document.getElementById('imageStrip');
     this.fileInput = document.getElementById('imageInput');
 
     document.getElementById('imgBtn').addEventListener('click', () => {
@@ -628,60 +626,21 @@ const ImageUploadPresenter = {
   },
 
   async _upload(file) {
-    const data = await Api.uploadImage(file);
+    const session = this.model.currentSession;
+    const data = await Api.uploadImage(file, session);
     if (!data.ok) {
       console.error('Upload failed:', data.error);
       return;
     }
-    const objectUrl = URL.createObjectURL(file);
-    this.uploadedImages.push({ path: data.path, name: data.name, objectUrl });
-    this._render();
+    // Insert path into textarea and done — no lingering thumbnail
+    const textarea = document.getElementById('cmdInput');
+    const pos = textarea.selectionStart;
+    const before = textarea.value.slice(0, pos);
+    const after = textarea.value.slice(pos);
+    textarea.value = before + data.path + ' ' + after;
+    textarea.dispatchEvent(new Event('input')); // auto-resize
   },
 
-  _render() {
-    this.strip.innerHTML = this.uploadedImages.map((img, i) => `
-      <div class="img-thumb" data-idx="${i}">
-        <img src="${img.objectUrl}" alt="${img.name}">
-        <button class="img-remove" data-idx="${i}">&times;</button>
-        <div class="img-path">${img.name}</div>
-      </div>
-    `).join('');
-    this.strip.classList.toggle('hidden', this.uploadedImages.length === 0);
-
-    this.strip.querySelectorAll('.img-remove').forEach(btn => {
-      btn.addEventListener('click', e => {
-        e.stopPropagation();
-        const idx = parseInt(btn.dataset.idx);
-        URL.revokeObjectURL(this.uploadedImages[idx].objectUrl);
-        this.uploadedImages.splice(idx, 1);
-        this._render();
-      });
-    });
-
-    // Click thumbnail to insert path into textarea
-    this.strip.querySelectorAll('.img-thumb').forEach(el => {
-      el.addEventListener('click', e => {
-        if (e.target.closest('.img-remove')) return;
-        const idx = parseInt(el.dataset.idx);
-        const textarea = document.getElementById('cmdInput');
-        const imgPath = this.uploadedImages[idx].path;
-        const pos = textarea.selectionStart;
-        const before = textarea.value.slice(0, pos);
-        const after = textarea.value.slice(pos);
-        textarea.value = before + imgPath + ' ' + after;
-        textarea.focus();
-      });
-    });
-  },
-
-  // Get all image paths and clear the strip
-  consumePaths() {
-    const paths = this.uploadedImages.map(img => img.path);
-    this.uploadedImages.forEach(img => URL.revokeObjectURL(img.objectUrl));
-    this.uploadedImages = [];
-    this._render();
-    return paths;
-  },
 };
 
 // ============================================================

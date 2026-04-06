@@ -417,10 +417,15 @@ const server = http.createServer(async (req, res) => {
       if (!filePart || !filePart.filename) {
         return json(res, { ok: false, error: 'no file' }, 400);
       }
+      // Session subdirectory for organization
+      const sessionPart = parts.find(p => p.name === 'session');
+      const sessionName = sessionPart ? sessionPart.data.toString().replace(/[^a-zA-Z0-9_-]/g, '') : 'default';
+      const sessionDir = path.join(UPLOAD_DIR, sessionName);
+      fs.mkdirSync(sessionDir, { recursive: true });
       // Sanitize filename, keep extension
       const ext = path.extname(filePart.filename).toLowerCase() || '.png';
       const safeName = `img_${Date.now()}${ext}`;
-      const filePath = path.join(UPLOAD_DIR, safeName);
+      const filePath = path.join(sessionDir, safeName);
       fs.writeFileSync(filePath, filePart.data);
       return json(res, { ok: true, path: filePath, name: safeName });
     } catch (e) {
