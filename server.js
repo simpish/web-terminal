@@ -257,7 +257,7 @@ function listDirAll(dirPath) {
 // --- HTTP server ---
 
 // --- Upload directory ---
-const UPLOAD_DIR = path.join(HOME, 'uploads');
+const UPLOAD_DIR = path.join(__dirname, 'uploads');
 try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch {}
 
 function parseBody(req) {
@@ -427,7 +427,7 @@ const server = http.createServer(async (req, res) => {
       const safeName = `img_${Date.now()}${ext}`;
       const filePath = path.join(sessionDir, safeName);
       fs.writeFileSync(filePath, filePart.data);
-      // Return ~/uploads/... so it doesn't start with / (avoids Claude Code slash command)
+      // Return ~/... path so it doesn't start with / (avoids Claude Code slash command)
       const displayPath = filePath.replace(HOME, '~');
       return json(res, { ok: true, path: displayPath, name: safeName });
     } catch (e) {
