@@ -427,7 +427,9 @@ const server = http.createServer(async (req, res) => {
       const safeName = `img_${Date.now()}${ext}`;
       const filePath = path.join(sessionDir, safeName);
       fs.writeFileSync(filePath, filePart.data);
-      return json(res, { ok: true, path: filePath, name: safeName });
+      // Return ~/uploads/... so it doesn't start with / (avoids Claude Code slash command)
+      const displayPath = filePath.replace(HOME, '~');
+      return json(res, { ok: true, path: displayPath, name: safeName });
     } catch (e) {
       return json(res, { ok: false, error: e.message }, 500);
     }
