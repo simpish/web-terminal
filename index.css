@@ -194,6 +194,8 @@ body {
 }
 .cd-btn { background: var(--accent); color: var(--bg); }
 .cd-btn:active { background: var(--accent-hover); }
+.copy-path-btn { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+.copy-path-btn:active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 .create-session-btn { background: var(--green); color: var(--bg); }
 .create-session-btn:active { background: #2ea043; }
 .hidden-toggle {

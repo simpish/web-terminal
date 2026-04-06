@@ -462,6 +462,8 @@ const BrowserPresenter = {
     this.createBtn = document.getElementById('createSessionBtn');
 
     this.cdBtn.addEventListener('click', () => this._cdHere());
+    this.copyPathBtn = document.getElementById('copyPathBtn');
+    this.copyPathBtn.addEventListener('click', () => this._copyPath(model.browserPath));
     this.createBtn.addEventListener('click', () => this._createSession());
     document.getElementById('hiddenToggle').addEventListener('click', () => {
       model.setShowHidden(!model.showHidden);
@@ -508,11 +510,28 @@ const BrowserPresenter = {
       html += `<div class="browser-item" data-dir="${full}"><span class="icon">&#128193;</span> ${d}</div>`;
     }
     for (const f of data.files) {
-      html += `<div class="browser-item file"><span class="icon">&#128196;</span> ${f}</div>`;
+      const full = data.path === '/' ? '/' + f : data.path + '/' + f;
+      html += `<div class="browser-item file" data-path="${full}"><span class="icon">&#128196;</span> ${f}</div>`;
     }
     this.listEl.innerHTML = html;
     this.listEl.querySelectorAll('.browser-item[data-dir]').forEach(el => {
       el.addEventListener('click', () => this.browseTo(el.dataset.dir));
+    });
+    // Tap file to copy its path
+    this.listEl.querySelectorAll('.browser-item.file').forEach(el => {
+      el.addEventListener('click', () => this._copyPath(el.dataset.path));
+    });
+  },
+
+  _copyPath(p) {
+    navigator.clipboard.writeText(p).then(() => {
+      this.copyPathBtn.textContent = 'Copied!';
+      setTimeout(() => { this.copyPathBtn.textContent = 'Copy path'; }, 1000);
+    }).catch(() => {
+      // Fallback: insert into textarea
+      const textarea = document.getElementById('cmdInput');
+      textarea.value += p;
+      textarea.dispatchEvent(new Event('input'));
     });
   },
 
