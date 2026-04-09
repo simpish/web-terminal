@@ -520,6 +520,38 @@ body {
 }
 .overlay.show { display: block; }
 
+/* Floating scroll buttons */
+.fab-scroll {
+  position: fixed;
+  right: 12px;
+  bottom: 140px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fab-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(30,30,30,0.45);
+  color: rgba(255,255,255,0.7);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fab-btn:active {
+  background: rgba(88,166,255,0.5);
+  color: #fff;
+}
+
 /* Desktop/tablet */
 @media (min-width: 768px) {
   .sidebar { position: relative; transform: translateX(0); }

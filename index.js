@@ -422,6 +422,11 @@ const KeysPresenter = {
       if (btn.dataset.key) InputPresenter.sendKey(btn.dataset.key);
     });
 
+    document.getElementById('fabScroll').addEventListener('click', e => {
+      const btn = e.target.closest('.fab-btn');
+      if (btn && btn.dataset.scroll) this._scroll(btn.dataset.scroll);
+    });
+
     document.getElementById('claudeRow').addEventListener('click', e => {
       const btn = e.target.closest('.kb');
       if (btn && btn.dataset.cmd) model.emit('insert-command', btn.dataset.cmd);
