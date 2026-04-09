@@ -400,6 +400,15 @@ body {
 }
 .kb:active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 
+/* Extra keys toggle */
+.kb.extra {
+  background: #1a2015;
+  border-color: #4a8030;
+  color: #8fcf6a;
+}
+.kb.extra:active, .kb.extra.active { background: #4a8030; color: #fff; }
+.extra-row.hidden { display: none; }
+
 /* Claude shortcut buttons */
 .kb.claude {
   background: #1a1520;

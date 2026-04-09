@@ -410,15 +410,29 @@ const KeysPresenter = {
       if (!btn) return;
       if (btn.id === 'menuBtn2') model.emit('sidebar:open');
       else if (btn.id === 'reloadBtn' || btn.id === 'copyBtn') { /* handled by own presenter */ }
+      else if (btn.id === 'extraToggle') this._toggleExtra();
       else if (btn.id === 'claudeToggle') this._toggleClaude();
       else if (btn.dataset.key) InputPresenter.sendKey(btn.dataset.key);
       else if (btn.dataset.scroll) this._scroll(btn.dataset.scroll);
+    });
+
+    document.getElementById('extraRow').addEventListener('click', e => {
+      const btn = e.target.closest('.kb');
+      if (!btn) return;
+      if (btn.dataset.key) InputPresenter.sendKey(btn.dataset.key);
     });
 
     document.getElementById('claudeRow').addEventListener('click', e => {
       const btn = e.target.closest('.kb');
       if (btn && btn.dataset.cmd) model.emit('insert-command', btn.dataset.cmd);
     });
+  },
+
+  _toggleExtra() {
+    const row = document.getElementById('extraRow');
+    const toggle = document.getElementById('extraToggle');
+    row.classList.toggle('hidden');
+    toggle.classList.toggle('active');
   },
 
   _toggleClaude() {

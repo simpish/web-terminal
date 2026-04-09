@@ -75,23 +75,29 @@
   </div>
 
   <div class="bottom-bar" id="bottomBar">
-    <!-- Row 1: Most used keys + Claude toggle -->
+    <!-- Row 1: Most used keys -->
     <div class="btn-row" id="keysRow">
       <button class="kb" id="menuBtn2" style="background:var(--accent);color:var(--bg);">&#9776;</button>
       <button class="kb" id="reloadBtn" style="color:var(--green);">&#x21bb;</button>
       <button class="kb" id="copyBtn" style="color:var(--yellow);">Copy</button>
       <button class="kb" data-key="Escape">Esc</button>
-      <button class="kb" data-key="Tab">Tab</button>
-      <button class="kb" data-key="BTab">S-Tab</button>
       <button class="kb" data-scroll="up">PgUp</button>
       <button class="kb" data-scroll="down">PgDn</button>
       <button class="kb" data-scroll="exit" style="color:var(--yellow);">Exit</button>
+      <button class="kb" data-key="Tab">Tab</button>
+      <button class="kb" data-key="Enter">Enter</button>
+      <button class="kb" data-key="C-c">^C</button>
+      <button class="kb extra" id="extraToggle">More</button>
+      <button class="kb claude" id="claudeToggle">Claude</button>
+    </div>
+
+    <!-- Row 2: Extra keys (hidden by default) -->
+    <div class="btn-row extra-row hidden" id="extraRow">
+      <button class="kb" data-key="BTab">S-Tab</button>
       <button class="kb" data-key="Left">&larr;</button>
       <button class="kb" data-key="Down">&darr;</button>
       <button class="kb" data-key="Up">&uarr;</button>
       <button class="kb" data-key="Right">&rarr;</button>
-      <button class="kb" data-key="Enter">Enter</button>
-      <button class="kb" data-key="C-c">^C</button>
       <button class="kb" data-key="C-d">^D</button>
       <button class="kb" data-key="C-z">^Z</button>
       <button class="kb" data-key="C-r">^R</button>
@@ -100,10 +106,9 @@
       <button class="kb" data-key="C-e">^E</button>
       <button class="kb" data-key="C-w">^W</button>
       <button class="kb" data-key="C-u">^U</button>
-      <button class="kb claude" id="claudeToggle">Claude</button>
     </div>
 
-    <!-- Row 2: Claude shortcuts (hidden by default) -->
+    <!-- Row 3: Claude shortcuts (hidden by default) -->
     <div class="btn-row claude-row hidden" id="claudeRow">
       <button class="kb claude" data-cmd="claude --dangerously-skip-permissions">skip</button>
       <button class="kb claude" data-cmd="claude --dangerously-skip-permissions --resume">skip-resume</button>
