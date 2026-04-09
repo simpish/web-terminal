@@ -511,6 +511,25 @@ body {
   -webkit-overflow-scrolling: touch;
   touch-action: pan-x pan-y;
 }
+.capture-footer {
+  padding: 8px 12px;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.capture-close-btn {
+  width: 100%;
+  padding: 10px;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.capture-close-btn:active { background: var(--accent-hover); }
 
 /* Overlay */
 .overlay {
