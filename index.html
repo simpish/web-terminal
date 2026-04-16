@@ -12,16 +12,6 @@
 
 <div class="overlay" id="overlay"></div>
 
-<div class="capture-modal" id="captureModal">
-  <div class="capture-header">
-    <span>Select &amp; Copy</span>
-  </div>
-  <div class="capture-text" id="captureText"></div>
-  <div class="capture-footer">
-    <button class="capture-close-btn" id="captureClose">Close</button>
-  </div>
-</div>
-
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-header">
     <span>Terminal</span>
@@ -51,28 +41,17 @@
     <div class="browser" id="browserList"></div>
     <div class="browser-actions">
       <button class="cd-btn" id="cdBtn">cd here</button>
-      <button class="copy-path-btn" id="copyPathBtn">Copy path</button>
       <button class="create-session-btn" id="createSessionBtn" style="display:none;">Create Session</button>
       <button class="hidden-toggle" id="hiddenToggle">.hidden</button>
     </div>
   </div>
 </aside>
 
-<div class="fab-scroll" id="fabScroll">
-  <button class="fab-btn" id="fabUp" data-scroll="up">&#9650;</button>
-  <button class="fab-btn" id="fabDown" data-scroll="down">&#9660;</button>
-</div>
-
 <div class="main">
   <div class="topbar">
     <button class="menu-btn" id="openSidebar">&#9776;</button>
     <span class="session-label" id="sessionName">--</span>
     <button class="rename-btn" id="renameBtn" title="Rename session">&#9998;</button>
-    <div class="font-size-ctrl">
-      <button class="fs-btn" id="fontMinus" title="Shrink font">&#x2212;</button>
-      <span class="fs-label" id="fontLabel">100%</span>
-      <button class="fs-btn" id="fontPlus" title="Enlarge font">&#x2b;</button>
-    </div>
     <div class="dot" id="connDot"></div>
     <button class="reconnect-btn" id="resessionBtn" title="Kill and recreate session at same dir" style="color:var(--red);margin-left:auto;">&times; Re-session</button>
   </div>
@@ -82,27 +61,22 @@
   </div>
 
   <div class="bottom-bar" id="bottomBar">
-    <!-- Row 1: Most used keys -->
+    <!-- Row 1: Most used keys + Claude toggle -->
     <div class="btn-row" id="keysRow">
       <button class="kb" id="menuBtn2" style="background:var(--accent);color:var(--bg);">&#9776;</button>
       <button class="kb" id="reloadBtn" style="color:var(--green);">&#x21bb;</button>
-      <button class="kb" id="copyBtn" style="color:var(--yellow);">Copy</button>
       <button class="kb" data-key="Escape">Esc</button>
-      <button class="kb" data-scroll="exit" style="color:var(--yellow);">Exit</button>
       <button class="kb" data-key="Tab">Tab</button>
-      <button class="kb" data-key="Enter">Enter</button>
-      <button class="kb" data-key="C-c">^C</button>
-      <button class="kb extra" id="extraToggle">More</button>
-      <button class="kb claude" id="claudeToggle">Claude</button>
-    </div>
-
-    <!-- Row 2: Extra keys (hidden by default) -->
-    <div class="btn-row extra-row hidden" id="extraRow">
       <button class="kb" data-key="BTab">S-Tab</button>
+      <button class="kb" data-scroll="up">PgUp</button>
+      <button class="kb" data-scroll="down">PgDn</button>
+      <button class="kb" data-scroll="exit" style="color:var(--yellow);">Exit</button>
       <button class="kb" data-key="Left">&larr;</button>
       <button class="kb" data-key="Down">&darr;</button>
       <button class="kb" data-key="Up">&uarr;</button>
       <button class="kb" data-key="Right">&rarr;</button>
+      <button class="kb" data-key="Enter">Enter</button>
+      <button class="kb" data-key="C-c">^C</button>
       <button class="kb" data-key="C-d">^D</button>
       <button class="kb" data-key="C-z">^Z</button>
       <button class="kb" data-key="C-r">^R</button>
@@ -111,23 +85,25 @@
       <button class="kb" data-key="C-e">^E</button>
       <button class="kb" data-key="C-w">^W</button>
       <button class="kb" data-key="C-u">^U</button>
+      <button class="kb claude" id="claudeToggle">Claude</button>
     </div>
 
-    <!-- Row 3: Claude shortcuts (hidden by default) -->
+    <!-- Row 2: Claude shortcuts (hidden by default) -->
     <div class="btn-row claude-row hidden" id="claudeRow">
-      <button class="kb claude" data-cmd="claude --dangerously-skip-permissions">skip</button>
-      <button class="kb claude" data-cmd="claude --dangerously-skip-permissions --resume">skip-resume</button>
-      <button class="kb claude" data-cmd="claude --resume">resume</button>
-      <button class="kb claude" data-cmd="/exit">/exit</button>
-      <button class="kb claude" data-cmd="/clear">/clear</button>
+      <button class="kb claude" data-cmd="claude">claude</button>
+      <button class="kb claude" data-cmd="claude --dangerously-skip-permissions">--skip</button>
+      <button class="kb claude" data-cmd="claude --dangerously-skip-permissions --agent boss">--skip --boss</button>
+      <button class="kb claude" data-cmd="claude --resume">--resume</button>
+      <button class="kb claude" data-cmd="claude --dangerously-skip-permissions --resume">--skip --resume</button>
+      <button class="kb claude" data-cmd="claude --model sonnet">--model sonnet</button>
+      <button class="kb claude" data-cmd="claude --model opus">--model opus</button>
       <button class="kb claude" data-cmd="/compact">/compact</button>
-      <button class="kb claude" data-cmd="/mcp">/mcp</button>
+      <button class="kb claude" data-cmd="y">y</button>
+      <button class="kb claude" data-cmd="yes">yes</button>
     </div>
 
     <!-- Row 3: Text input + Send + Enter -->
     <div class="input-row">
-      <input type="file" id="imageInput" accept="image/*,.avif" style="display:none;">
-      <button class="act-btn img-btn" id="imgBtn" title="Upload image">&#128247;</button>
       <textarea id="cmdInput" rows="1" placeholder="Input..."
         autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"
       ></textarea>
