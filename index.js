@@ -40,7 +40,7 @@ const Api = {
   capture(session) { return this._post('/api/capture', { session }); },
   ls(path, showHidden) { return this._post('/api/ls', { path, showHidden }); },
 
-  uploadImage(file, session) {
+  upload(file, session) {
     const form = new FormData();
     form.append('file', file);
     if (session) form.append('session', session);
@@ -665,40 +665,39 @@ const TabsPresenter = {
 };
 
 // ============================================================
-// ImageUploadPresenter
+// UploadPresenter
 // ============================================================
-const ImageUploadPresenter = {
+const UploadPresenter = {
   init(model) {
     this.model = model;
-    this.fileInput = document.getElementById('imageInput');
+    this.fileInput = document.getElementById('fileInput');
 
-    document.getElementById('imgBtn').addEventListener('click', () => {
+    document.getElementById('uploadBtn').addEventListener('click', () => {
       this.fileInput.click();
     });
 
     this.fileInput.addEventListener('change', () => {
-      const file = this.fileInput.files[0];
-      if (file) this._upload(file);
+      for (const file of this.fileInput.files) {
+        this._upload(file);
+      }
       this.fileInput.value = '';
     });
   },
 
   async _upload(file) {
     const session = this.model.currentSession;
-    const data = await Api.uploadImage(file, session);
+    const data = await Api.upload(file, session);
     if (!data.ok) {
       console.error('Upload failed:', data.error);
       return;
     }
-    // Insert path into textarea and done — no lingering thumbnail
     const textarea = document.getElementById('cmdInput');
     const pos = textarea.selectionStart;
     const before = textarea.value.slice(0, pos);
     const after = textarea.value.slice(pos);
     textarea.value = before + data.path + ' ' + after;
-    textarea.dispatchEvent(new Event('input')); // auto-resize
+    textarea.dispatchEvent(new Event('input'));
   },
-
 };
 
 // ============================================================
@@ -738,7 +737,7 @@ async function init() {
   KeysPresenter.init(AppModel);
   BrowserPresenter.init(AppModel);
   CapturePresenter.init(AppModel);
-  ImageUploadPresenter.init(AppModel);
+  UploadPresenter.init(AppModel);
   ThemePresenter.init(AppModel);
   TabsPresenter.init(AppModel);
 

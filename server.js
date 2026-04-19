@@ -422,9 +422,9 @@ const server = http.createServer(async (req, res) => {
       const sessionName = sessionPart ? sessionPart.data.toString().replace(/[^a-zA-Z0-9_-]/g, '') : 'default';
       const sessionDir = path.join(UPLOAD_DIR, sessionName);
       fs.mkdirSync(sessionDir, { recursive: true });
-      // Sanitize filename, keep extension
-      const ext = path.extname(filePart.filename).toLowerCase() || '.png';
-      const safeName = `img_${Date.now()}${ext}`;
+      // Sanitize filename: keep original name, prepend timestamp to avoid collisions
+      const origName = filePart.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const safeName = `${Date.now()}_${origName}`;
       const filePath = path.join(sessionDir, safeName);
       fs.writeFileSync(filePath, filePart.data);
       // Return ~/... path so it doesn't start with / (avoids Claude Code slash command)

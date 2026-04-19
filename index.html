@@ -91,10 +91,10 @@
     <!-- Row 2: Claude shortcuts (hidden by default) -->
     <div class="btn-row claude-row hidden" id="claudeRow">
       <button class="kb claude" data-cmd="claude">claude</button>
-      <button class="kb claude" data-cmd="claude --dangerously-skip-permissions">--skip</button>
-      <button class="kb claude" data-cmd="claude --dangerously-skip-permissions --agent boss">--skip --boss</button>
+      <button class="kb claude" data-cmd="claude --permission-mode auto">auto</button>
+      <button class="kb claude" data-cmd="claude --permission-mode auto --agent boss">auto --boss</button>
       <button class="kb claude" data-cmd="claude --resume">--resume</button>
-      <button class="kb claude" data-cmd="claude --dangerously-skip-permissions --resume">--skip --resume</button>
+      <button class="kb claude" data-cmd="claude --permission-mode auto --resume">auto --resume</button>
       <button class="kb claude" data-cmd="claude --model sonnet">--model sonnet</button>
       <button class="kb claude" data-cmd="claude --model opus">--model opus</button>
       <button class="kb claude" data-cmd="/compact">/compact</button>
@@ -104,6 +104,8 @@
 
     <!-- Row 3: Text input + Send + Enter -->
     <div class="input-row">
+      <input type="file" id="fileInput" accept="*/*" multiple style="display:none;">
+      <button class="act-btn img-btn" id="uploadBtn" title="Upload file">&#128206;</button>
       <textarea id="cmdInput" rows="1" placeholder="Input..."
         autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"
       ></textarea>
