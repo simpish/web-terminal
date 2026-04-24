@@ -469,7 +469,7 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const data = fs.readFileSync(filePath);
-      res.writeHead(200, { 'Content-Type': contentType });
+      res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'no-cache' });
       return res.end(data);
     } catch {
       // fall through to 404
