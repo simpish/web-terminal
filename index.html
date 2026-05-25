@@ -22,6 +22,17 @@
   </div>
 </div>
 
+<div class="markdown-modal" id="markdownModal">
+  <div class="markdown-header">
+    <span class="markdown-title" id="markdownTitle">Markdown</span>
+    <button class="markdown-copy-btn" id="markdownCopyPath">Path</button>
+  </div>
+  <div class="markdown-content" id="markdownContent"></div>
+  <div class="markdown-footer">
+    <button class="capture-close-btn" id="markdownClose">Close</button>
+  </div>
+</div>
+
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-header">
     <span>Terminal</span>
@@ -116,15 +127,10 @@
     <!-- Row 3: Claude shortcuts (hidden by default) -->
     <div class="btn-row claude-row hidden" id="claudeRow">
       <button class="kb claude" data-cmd="claude">claude</button>
-      <button class="kb claude" data-cmd="claude --permission-mode auto">auto</button>
-      <button class="kb claude" data-cmd="claude --permission-mode auto --agent boss">auto --boss</button>
       <button class="kb claude" data-cmd="claude --resume">--resume</button>
       <button class="kb claude" data-cmd="claude --permission-mode auto --resume">auto --resume</button>
-      <button class="kb claude" data-cmd="claude --model sonnet">--model sonnet</button>
-      <button class="kb claude" data-cmd="claude --model opus">--model opus</button>
       <button class="kb claude" data-cmd="/compact">/compact</button>
-      <button class="kb claude" data-cmd="y">y</button>
-      <button class="kb claude" data-cmd="yes">yes</button>
+      <button class="kb claude" data-cmd="/exit">/exit</button>
     </div>
 
     <!-- Row 4: Text input + Send + Enter -->
@@ -140,6 +146,7 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="/index.js"></script>
 </body>
 </html>

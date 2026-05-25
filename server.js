@@ -53,7 +53,7 @@ function startTtyd(sessionName) {
     '-i', HOST,
     '-p', String(port),
     '-W',
-    '-t', 'scrollback=0',
+    '-t', 'scrollback=10000',
     '-t', 'fontFamily=MesloLGS NF,Hack Nerd Font,FiraCode Nerd Font,JetBrainsMono Nerd Font,Menlo,Monaco,Consolas,monospace',
     'tmux', 'new-session', '-A', '-s', sessionName
   ], { stdio: 'ignore', detached: true, env: { ...process.env, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' } });
@@ -254,6 +254,23 @@ function listDirAll(dirPath) {
   }
 }
 
+function readFile(filePath) {
+  try {
+    const resolved = path.resolve(filePath);
+    if (!resolved.startsWith(HOME)) {
+      return { ok: false, error: 'Access denied' };
+    }
+    const stat = fs.statSync(resolved);
+    if (stat.size > 1024 * 1024) {
+      return { ok: false, error: 'File too large (max 1MB)' };
+    }
+    const content = fs.readFileSync(resolved, 'utf8');
+    return { ok: true, content, name: path.basename(resolved), path: resolved };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 // --- HTTP server ---
 
 // --- Upload directory ---
@@ -381,6 +398,12 @@ const server = http.createServer(async (req, res) => {
     const body = await parseBody(req);
     const showHidden = body.showHidden || false;
     return json(res, showHidden ? listDirAll(body.path) : listDir(body.path));
+  }
+
+  if (pathname === '/api/read-file' && req.method === 'POST') {
+    const body = await parseBody(req);
+    if (!body.path) return json(res, { ok: false, error: 'path required' }, 400);
+    return json(res, readFile(body.path));
   }
 
   if (pathname === '/api/capture' && req.method === 'POST') {

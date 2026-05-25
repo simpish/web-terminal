@@ -39,6 +39,7 @@ const Api = {
   scroll(session, direction) { return this._post('/api/scroll', { session, direction }); },
   capture(session) { return this._post('/api/capture', { session }); },
   ls(path, showHidden) { return this._post('/api/ls', { path, showHidden }); },
+  readFile(path) { return this._post('/api/read-file', { path }); },
 
   upload(file, session) {
     const form = new FormData();
@@ -304,10 +305,11 @@ const TerminalPresenter = {
     const frame = document.getElementById('termFrame');
     if (!frame) return;
     const z = this.model.termZoom;
-    frame.style.transform = `scale(${z})`;
-    frame.style.transformOrigin = 'top left';
-    frame.style.width = (100 / z) + '%';
-    frame.style.height = (100 / z) + '%';
+    frame.style.transform = '';
+    frame.style.transformOrigin = '';
+    frame.style.width = '100%';
+    frame.style.height = '100%';
+    frame.style.zoom = z;
   },
 
   _updateLabel() {
@@ -530,7 +532,10 @@ const BrowserPresenter = {
     }
     for (const f of data.files) {
       const full = data.path === '/' ? '/' + f : data.path + '/' + f;
-      html += `<div class="browser-item file" data-path="${full}"><span class="icon">&#128196;</span> ${f}</div>`;
+      const isMd = f.toLowerCase().endsWith('.md');
+      const cls = isMd ? ' md-file' : '';
+      const icon = isMd ? '&#128221;' : '&#128196;';
+      html += `<div class="browser-item file${cls}" data-path="${full}"><span class="icon">${icon}</span> ${f}</div>`;
     }
     this.listEl.innerHTML = html;
     this.listEl.querySelectorAll('.browser-item[data-dir]').forEach(el => {
@@ -538,7 +543,14 @@ const BrowserPresenter = {
     });
     // Tap file to copy its path
     this.listEl.querySelectorAll('.browser-item.file').forEach(el => {
-      el.addEventListener('click', () => this._copyPath(el.dataset.path));
+      el.addEventListener('click', () => {
+        const filePath = el.dataset.path;
+        if (filePath.toLowerCase().endsWith('.md')) {
+          MarkdownPresenter.open(filePath);
+        } else {
+          this._copyPath(filePath);
+        }
+      });
     });
   },
 
@@ -617,6 +629,64 @@ const CapturePresenter = {
       }
     } catch (e) {
       console.error('capture failed:', e);
+    }
+  },
+};
+
+// ============================================================
+// MarkdownPresenter
+// ============================================================
+const MarkdownPresenter = {
+  init(model) {
+    this.model = model;
+    this.modal = document.getElementById('markdownModal');
+    this.titleEl = document.getElementById('markdownTitle');
+    this.contentEl = document.getElementById('markdownContent');
+    this.currentPath = '';
+
+    document.getElementById('markdownClose').addEventListener('click', () => this.close());
+    document.getElementById('markdownCopyPath').addEventListener('click', () => this._copyPath());
+  },
+
+  async open(filePath) {
+    this.currentPath = filePath;
+    this.titleEl.textContent = filePath.split('/').pop();
+    this.contentEl.innerHTML = '<p style="color:var(--text-dim)">Loading...</p>';
+    this.modal.classList.add('open');
+
+    try {
+      const data = await Api.readFile(filePath);
+      if (!data.ok) {
+        this.contentEl.innerHTML = `<p style="color:var(--red)">Error: ${data.error}</p>`;
+        return;
+      }
+      this.contentEl.innerHTML = marked.parse(data.content, { breaks: true, gfm: true });
+      this.contentEl.querySelectorAll('a').forEach(a => {
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener noreferrer');
+      });
+    } catch (e) {
+      this.contentEl.innerHTML = '<p style="color:var(--red)">Failed to load file</p>';
+    }
+  },
+
+  close() {
+    this.modal.classList.remove('open');
+    this.contentEl.innerHTML = '';
+  },
+
+  _copyPath() {
+    const btn = document.getElementById('markdownCopyPath');
+    const p = this.currentPath;
+    const done = () => {
+      const prev = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = prev; }, 1000);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(p).then(done).catch(() => BrowserPresenter._fallbackCopy(p, done));
+    } else {
+      BrowserPresenter._fallbackCopy(p, done);
     }
   },
 };
@@ -737,6 +807,7 @@ async function init() {
   KeysPresenter.init(AppModel);
   BrowserPresenter.init(AppModel);
   CapturePresenter.init(AppModel);
+  MarkdownPresenter.init(AppModel);
   UploadPresenter.init(AppModel);
   ThemePresenter.init(AppModel);
   TabsPresenter.init(AppModel);
