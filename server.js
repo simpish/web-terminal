@@ -15,6 +15,80 @@ const HOME = os.homedir();
 const PORT = parseInt(process.env.PORT || '7681');
 const TTYD_BASE_PORT = parseInt(process.env.TTYD_BASE_PORT || '7700');
 
+// --- Basic Auth (single login gate for the dashboard, the /api control plane, and the proxied terminals) ---
+function loadAuth() {
+  if (process.env.TTYD_AUTH_USER && process.env.TTYD_AUTH_PASS) {
+    return { user: process.env.TTYD_AUTH_USER, pass: process.env.TTYD_AUTH_PASS };
+  }
+  try {
+    const raw = fs.readFileSync(path.join(HOME, '.config', 'ttyd-term', 'credentials'), 'utf8').trim();
+    const i = raw.indexOf(':');
+    if (i > 0) return { user: raw.slice(0, i), pass: raw.slice(i + 1) };
+  } catch {}
+  return null;
+}
+const AUTH = loadAuth();
+if (!AUTH) {
+  console.error('[ttyd-term] ERROR: no credentials at ~/.config/ttyd-term/credentials (and no TTYD_AUTH_* env) — FAILING CLOSED, refusing all requests. Create the file as "user:pass" (mode 600) and restart.');
+}
+function eq(a, b) {
+  const ab = Buffer.from(String(a)), bb = Buffer.from(String(b));
+  if (ab.length !== bb.length) return false;
+  return require('crypto').timingSafeEqual(ab, bb);
+}
+function checkAuth(req) {
+  if (!AUTH) return false; // fail closed: no credentials configured => deny everyone (not open to the tailnet)
+  const m = /^Basic (.+)$/.exec(req.headers['authorization'] || '');
+  if (!m) return false;
+  let dec;
+  try { dec = Buffer.from(m[1], 'base64').toString('utf8'); } catch { return false; }
+  const i = dec.indexOf(':');
+  if (i < 0) return false;
+  const okU = eq(dec.slice(0, i), AUTH.user);
+  const okP = eq(dec.slice(i + 1), AUTH.pass);
+  return okU && okP;
+}
+function send401(res) {
+  res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="ttyd-term", charset="UTF-8"', 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end('Authentication required');
+}
+
+// Resolve a /term/<session> path to a safe tmux session key (URL-decode, then restrict to the charset sessions are named with)
+function termSeg(pathname) {
+  let s = (pathname.split('/')[2] || '');
+  try { s = decodeURIComponent(s); } catch {}
+  return s.replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
+// Headers for the localhost ttyd backend — strip client auth/cookies so our dashboard credential is never forwarded
+const STRIP_HEADERS = new Set(['authorization', 'cookie', 'proxy-authorization']);
+function backendHeaders(req, port) {
+  const h = {};
+  for (const [k, v] of Object.entries(req.headers)) {
+    if (STRIP_HEADERS.has(k.toLowerCase())) continue;
+    h[k] = v;
+  }
+  h.host = '127.0.0.1:' + port;
+  return h;
+}
+
+// --- Reverse-proxy a terminal request to its localhost ttyd (HTTP) ---
+function proxyTerminal(req, res, port) {
+  const proxyReq = http.request({
+    hostname: '127.0.0.1', port, path: req.url, method: req.method,
+    headers: backendHeaders(req, port),
+  }, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    proxyRes.pipe(res);
+    proxyRes.on('error', () => res.destroy());
+  });
+  proxyReq.setTimeout(60000, () => proxyReq.destroy());
+  proxyReq.on('error', () => { try { if (!res.headersSent) res.writeHead(502); res.end('Bad Gateway'); } catch {} });
+  req.on('error', () => proxyReq.destroy());
+  res.on('close', () => proxyReq.destroy());
+  req.pipe(proxyReq);
+}
+
 // Safe exec with killOnTimeout (prevents zombie send-keys)
 function safeExec(cmd, timeoutMs = 3000) {
   const result = require('child_process').spawnSync('bash', ['-c', cmd], {
@@ -49,13 +123,19 @@ function startTtyd(sessionName) {
     return ttydProcesses.get(sessionName).port;
   }
   const port = nextPort++;
+  const safeBase = String(sessionName).replace(/[^a-zA-Z0-9_-]/g, '');
   const proc = spawn('ttyd', [
-    '-i', HOST,
+    '-i', '127.0.0.1',
     '-p', String(port),
+    '-b', '/term/' + safeBase,
     '-W',
-    '-t', 'scrollback=10000',
+    // xterm.js must keep NO local scrollback: tmux redraws leave stale garbage
+    // frames in it, so swiping up shows ancient broken history. Real history
+    // lives in tmux (copy-mode via the ▲▼ buttons / /api/scroll).
+    '-t', 'scrollback=0',
     '-t', 'fontFamily=MesloLGS NF,Hack Nerd Font,FiraCode Nerd Font,JetBrainsMono Nerd Font,Menlo,Monaco,Consolas,monospace',
-    'tmux', 'new-session', '-A', '-s', sessionName
+    'tmux', 'set-option', '-g', 'history-limit', '10000', ';',
+    'new-session', '-A', '-s', sessionName
   ], { stdio: 'ignore', detached: true, env: { ...process.env, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' } });
   proc.unref();
   ttydProcesses.set(sessionName, { port, process: proc });
@@ -98,6 +178,43 @@ function resession(sessionName) {
   return { ok: true, port };
 }
 
+// --- session persistence (remember each tmux session's name + working dir across reboots) ---
+const STATE_FILE = path.join(HOME, '.config', 'ttyd-term', 'sessions.json');
+
+function saveSessionState() {
+  try {
+    const names = tmuxExec(['list-sessions', '-F', '#{session_name}']).trim().split('\n').filter(Boolean);
+    if (names.length === 0) {
+      // Never overwrite a non-empty memory with nothing (e.g. tmux server not ready yet at boot) — that would erase the restore data
+      try { if (Object.keys(JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))).length > 0) return; } catch {}
+    }
+    const state = {};
+    for (const name of names) {
+      let cwd = HOME;
+      try { cwd = tmuxExec(['display-message', '-t', name, '-p', '#{pane_current_path}']).trim() || HOME; } catch {}
+      state[name] = { cwd };
+    }
+    fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
+    // Atomic write: a crash/power-loss mid-write can't corrupt or empty the file
+    const tmp = STATE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+    fs.renameSync(tmp, STATE_FILE);
+  } catch {}
+}
+
+function restoreSessionState() {
+  let saved = {};
+  try { saved = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return; }
+  let existing = [];
+  try { existing = tmuxExec(['list-sessions', '-F', '#{session_name}']).trim().split('\n').filter(Boolean); } catch {}
+  for (const [name, info] of Object.entries(saved)) {
+    if (existing.includes(name)) continue;
+    let cwd = HOME;
+    try { if (info && info.cwd && fs.statSync(info.cwd).isDirectory()) cwd = info.cwd; } catch {}
+    try { tmuxExec(['new-session', '-d', '-s', name, '-c', cwd]); } catch {}
+  }
+}
+
 // --- tmux helpers ---
 
 function tmuxList() {
@@ -138,6 +255,7 @@ function tmuxKill(name) {
   stopTtyd(name);
   try {
     tmuxExec(['kill-session', '-t', name]);
+    saveSessionState();
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -202,6 +320,29 @@ function tmuxSendLiteral(name, text) {
 
 function tmuxScroll(name, direction) {
   try {
+    // Full-screen apps (Claude Code etc.) run on the alternate screen: tmux
+    // history is empty there, so copy-mode has nothing to scroll. Scroll the
+    // app itself instead — via mouse-wheel events if it tracks the mouse.
+    let alt = false, mouse = false, inMode = false;
+    try {
+      const f = tmuxExec(['display-message', '-p', '-t', name,
+        '#{alternate_on} #{mouse_any_flag} #{pane_in_mode}']).trim().split(' ');
+      alt = f[0] === '1'; mouse = f[1] === '1'; inMode = f[2] === '1';
+    } catch {}
+
+    if (alt && direction !== 'exit') {
+      if (inMode) {
+        try { tmuxExec(['send-keys', '-t', name, '-X', 'cancel']); } catch {}
+      }
+      if (mouse) {
+        const btn = direction === 'up' ? 64 : 65; // SGR wheel up/down
+        tmuxExec(['send-keys', '-t', name, '-l', '--', `\x1b[<${btn};5;5M`.repeat(5)]);
+      } else {
+        tmuxExec(['send-keys', '-t', name, direction === 'up' ? 'PageUp' : 'PageDown']);
+      }
+      return { ok: true, alt: true };
+    }
+
     if (direction === 'up') {
       tmuxExec(['copy-mode', '-t', name]);
       tmuxExec(['send-keys', '-t', name, '-X', 'halfpage-up']);
@@ -211,7 +352,7 @@ function tmuxScroll(name, direction) {
       // Exit copy mode
       try { tmuxExec(['send-keys', '-t', name, '-X', 'cancel']); } catch {}
     }
-    return { ok: true };
+    return { ok: true, alt };
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -339,8 +480,18 @@ function json(res, data, status = 200) {
 }
 
 const server = http.createServer(async (req, res) => {
+  // Single auth gate — covers the dashboard, every /api/* control route, and the terminal proxy
+  if (!checkAuth(req)) return send401(res);
+
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
+
+  // --- Terminal reverse-proxy: /term/<session>/... -> 127.0.0.1:<ttyd-port> ---
+  if (pathname.startsWith('/term/')) {
+    const entry = ttydProcesses.get(termSeg(pathname));
+    if (!entry) { res.writeHead(404); return res.end('No such terminal'); }
+    return proxyTerminal(req, res, entry.port);
+  }
 
   // --- API routes ---
 
@@ -513,6 +664,45 @@ function cleanup() {
 process.on('SIGINT', cleanup);
 process.on('SIGTERM', cleanup);
 
+// --- WebSocket upgrade proxy for ttyd terminals (/term/<session>/ws) ---
+server.on('upgrade', (req, socket, head) => {
+  if (!checkAuth(req)) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="ttyd-term"\r\nConnection: close\r\n\r\n');
+    return socket.destroy();
+  }
+  const pathname = req.url.split('?')[0];
+  if (!pathname.startsWith('/term/')) return socket.destroy();
+  const entry = ttydProcesses.get(termSeg(pathname));
+  if (!entry) return socket.destroy();
+
+  const proxyReq = http.request({
+    hostname: '127.0.0.1', port: entry.port, path: req.url, method: req.method,
+    headers: backendHeaders(req, entry.port),
+  });
+  // Guard only the connect/handshake phase; cleared once the WS is established
+  const connectTimer = setTimeout(() => { proxyReq.destroy(); socket.destroy(); }, 10000);
+  proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
+    clearTimeout(connectTimer);
+    const lines = ['HTTP/1.1 101 Switching Protocols'];
+    for (const [k, v] of Object.entries(proxyRes.headers)) lines.push(`${k}: ${v}`);
+    socket.write(lines.join('\r\n') + '\r\n\r\n');
+    if (proxyHead && proxyHead.length) proxySocket.unshift(proxyHead);
+    proxySocket.pipe(socket);
+    socket.pipe(proxySocket);
+    proxySocket.on('error', () => { proxySocket.destroy(); socket.destroy(); });
+    socket.on('error', () => { socket.destroy(); proxySocket.destroy(); });
+    proxySocket.on('close', () => socket.destroy());
+    socket.on('close', () => proxySocket.destroy());
+  });
+  proxyReq.on('error', () => { clearTimeout(connectTimer); socket.destroy(); });
+  if (head && head.length) proxyReq.write(head);
+  proxyReq.end();
+});
+
 server.listen(PORT, HOST, () => {
   console.log(`Server running at http://${HOST}:${PORT}`);
 });
+
+// Restore saved tmux sessions (name + working dir) after a reboot, then persist periodically
+setTimeout(() => { restoreSessionState(); saveSessionState(); }, 1000);
+setInterval(saveSessionState, 30000);

@@ -273,8 +273,8 @@ const TerminalPresenter = {
     });
     document.getElementById('resessionBtn').addEventListener('click', () => this._resession());
 
-    model.on('session-changed', ({ port, host }) => {
-      if (port && host) this.load(`http://${host}:${port}`);
+    model.on('session-changed', ({ name }) => {
+      if (name) this.load(`/term/${encodeURIComponent(name)}/`);
     });
     model.on('zoom-changed', () => {
       this._applyZoom();
@@ -298,7 +298,7 @@ const TerminalPresenter = {
 
   reload() {
     const m = this.model;
-    if (m.currentPort) this.load(`http://${m.currentTtydHost}:${m.currentPort}`);
+    if (m.currentSession) this.load(`/term/${encodeURIComponent(m.currentSession)}/`);
   },
 
   _applyZoom() {
@@ -461,11 +461,12 @@ const KeysPresenter = {
   async _scroll(direction) {
     const session = this.model.currentSession;
     if (!session) return;
-    await Api.scroll(session, direction);
+    const res = await Api.scroll(session, direction);
     if (direction === 'exit') {
       this.model.setScrollMode(false);
       setTimeout(() => TerminalPresenter.reload(), 300);
-    } else {
+    } else if (!(res && res.alt)) {
+      // alt-screen apps scroll themselves — no tmux copy-mode to track/exit
       this.model.setScrollMode(true);
     }
   },
